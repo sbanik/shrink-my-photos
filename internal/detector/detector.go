@@ -2,14 +2,14 @@ package detector
 
 import (
 	"image"
-	_ "image/jpeg" // Register JPEG decoder
-	_ "image/png"  // Register PNG decoder
+	_ "image/jpeg"
+	_ "image/png"
 	"os"
+	"strings"
 
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-// Common display aspect ratios (Width / Height)
 var standardAspectRatios = []float64{
 	16.0 / 9.0,  // 1.777 (1920x1080, 2560x1440, 3840x2160) - iPhone 6/7/8, SE series
 	16.0 / 10.0, // 1.600 (MacBook Display aspect ratios)
@@ -18,24 +18,39 @@ var standardAspectRatios = []float64{
 	19.5 / 9.0,  // 2.166 (Modern iPhone X, 11, 12, 13, 14, 15, 16 series / Android screen ratio)
 }
 
+var knownCameraMakes = []string{
+	"nikon", "fujifilm", "canon", "sony", "panasonic",
+	"olympus", "leica", "hasselblad", "pentax", "ricoh",
+}
+
 func IsScreenshot(path string) bool {
-	// 1. Check metadata (EXIF data)
 	f, err := os.Open(path)
 	if err == nil {
 		defer f.Close()
 
 		x, err := exif.Decode(f)
 		if err == nil {
-			// Check EXIF Software/UserComment tag for "screenshot" or Apple capture markers
-			softTag, _ := x.Get(exif.Software)
-			if softTag != nil && softTag.String() != "" {
-				// macOS screenshot metadata often contains "macOS" or empty camera details
-				return true
+			// Check camera make
+			if makeTag, errMake := x.Get(exif.Make); errMake == nil {
+				makeStr := strings.ToLower(makeTag.String())
+				for _, camera := range knownCameraMakes {
+					if strings.Contains(makeStr, camera) {
+						return false
+					}
+				}
+
+				// iPhone camera photos carry "Apple" as Make AND have a LensModel or Model tag.
+				// iOS Screenshots do not populate lens details.
+				if strings.Contains(makeStr, "apple") {
+					if lensTag, errLens := x.Get(exif.LensModel); errLens == nil && lensTag.String() != "" {
+						return false
+					}
+				}
 			}
 		}
 	}
 
-	// 2. Fallback: Image Dimensions and Aspect Ratio Analysis
+	// Aspect Ratio Fallback
 	fImage, err := os.Open(path)
 	if err != nil {
 		return false
@@ -56,9 +71,8 @@ func IsScreenshot(path string) bool {
 
 	ratio := width / height
 	invRatio := height / width
-
-	// Compare ratio against standard display aspect ratios (with tiny error tolerance)
 	tolerance := 0.02
+
 	for _, stdRatio := range standardAspectRatios {
 		if (ratio >= stdRatio-tolerance && ratio <= stdRatio+tolerance) ||
 			(invRatio >= stdRatio-tolerance && invRatio <= stdRatio+tolerance) {

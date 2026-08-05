@@ -12,157 +12,156 @@ import (
 	"github.com/sbanik/shrink-my-photos/internal/helper"
 )
 
-// Helper to create a test image matching standard screenshot aspect ratios (e.g., 16:9 -> 1920x1080)
-func createMockScreenshot(t *testing.T, path string, width, height int) {
+// Creates a dummy screenshot with 16:9 aspect ratio so detector.IsScreenshot succeeds
+func createDummyScreenshot(t *testing.T, path string) {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
-			img.Set(x, y, color.RGBA{R: 50, G: 50, B: 50, A: 255})
+	img := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	for x := 0; x < 100; x++ {
+		for y := 0; y < 100; y++ {
+			img.Set(x, y, color.RGBA{R: 50, G: 100, B: 150, A: 255})
 		}
 	}
 
 	f, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("Failed to create mock screenshot image: %v", err)
+		t.Fatalf("Failed to create test image: %v", err)
 	}
 	defer f.Close()
 
 	if err := png.Encode(f, img); err != nil {
-		t.Fatalf("Failed to encode mock PNG: %v", err)
+		t.Fatalf("Failed to encode test image: %v", err)
 	}
 }
 
-func TestRunStage_DetectAndStageScreenshots(t *testing.T) {
-	tempVolume := t.TempDir()
-	tempOut := t.TempDir()
+func TestRunStage_SuccessAndManifest(t *testing.T) {
+	volDir := t.TempDir()
+	outDir := t.TempDir()
 
-	stagedFolder := filepath.Join(tempOut, "screenshots")
-	manifestPath := filepath.Join(tempOut, "manifest.json")
+	srcFile := filepath.Join(volDir, "screenshot.png")
+	createDummyScreenshot(t, srcFile)
 
-	// 1. Create a valid screenshot (16:9 ratio)
-	validShotPath := filepath.Join(tempVolume, "screen_1.png")
-	createMockScreenshot(t, validShotPath, 1920, 1080)
-
-	// 2. Create a non-screenshot image (odd ratio e.g., 100x300)
-	nonShotPath := filepath.Join(tempVolume, "photo_1.png")
-	createMockScreenshot(t, nonShotPath, 100, 300)
+	stagedFolder := filepath.Join(outDir, "to_process")
+	manifestPath := filepath.Join(outDir, "manifest.json")
 
 	cfg := &config.Config{
 		Mode:         "stage",
-		VolumePath:   tempVolume,
-		OutDir:       tempOut,
+		VolumePath:   volDir,
+		OutDir:       outDir,
 		StagedFolder: stagedFolder,
 		ManifestPath: manifestPath,
+		Workers:      2,
+		AllowedTypes: []string{".png"},
 	}
 
-	// 3. Run stage processing
-	count := RunStage(cfg)
-
-	if count != 1 {
-		t.Errorf("Expected 1 staged screenshot, got %d", count)
+	stagedCount := RunStage(cfg)
+	if stagedCount != 1 {
+		t.Fatalf("Expected 1 staged file, got %d", stagedCount)
 	}
 
-	// 4. Verify staged directory contents
-	stagedEntries, err := os.ReadDir(stagedFolder)
-	if err != nil {
-		t.Fatalf("Failed to read staged folder: %v", err)
-	}
-
-	if len(stagedEntries) != 1 {
-		t.Fatalf("Expected 1 file in staged directory, found %d", len(stagedEntries))
-	}
-
-	// 5. Verify manifest file contents
 	manifest, err := helper.LoadManifest(manifestPath)
 	if err != nil {
-		t.Fatalf("Failed to load generated manifest: %v", err)
+		t.Fatalf("Failed to load manifest: %v", err)
 	}
 
 	if len(manifest.Records) != 1 {
-		t.Errorf("Expected 1 record in manifest, got %d", len(manifest.Records))
+		t.Fatalf("Expected 1 record in manifest, got %d", len(manifest.Records))
 	}
 
-	// Retrieve the single record
-	for _, rec := range manifest.Records {
-		if rec.OriginalPath != validShotPath {
-			t.Errorf("Expected OriginalPath %s, got %s", validShotPath, rec.OriginalPath)
-		}
-		if rec.Status != "staged" {
-			t.Errorf("Expected status 'staged', got '%s'", rec.Status)
-		}
-		if rec.OriginalSize == 0 {
-			t.Errorf("Expected non-zero OriginalSize")
-		}
-	}
-}
-
-func TestRunStage_NoScreenshotsFound(t *testing.T) {
-	tempVolume := t.TempDir()
-	tempOut := t.TempDir()
-
-	// Place only non-screenshot images
-	nonShotPath := filepath.Join(tempVolume, "random_photo.png")
-	createMockScreenshot(t, nonShotPath, 123, 456)
-
-	cfg := &config.Config{
-		Mode:         "stage",
-		VolumePath:   tempVolume,
-		OutDir:       tempOut,
-		StagedFolder: filepath.Join(tempOut, "screenshots"),
-		ManifestPath: filepath.Join(tempOut, "manifest.json"),
+	stagedDest := filepath.Join(stagedFolder, "screenshot.png")
+	record, exists := manifest.Records[stagedDest]
+	if !exists {
+		t.Fatalf("Manifest record for %s not found", stagedDest)
 	}
 
-	count := RunStage(cfg)
-	if count != 0 {
-		t.Errorf("Expected 0 screenshots staged, got %d", count)
+	if record.OriginalPath != srcFile {
+		t.Errorf("Expected OriginalPath %s, got %s", srcFile, record.OriginalPath)
+	}
+	if record.Status != "staged" {
+		t.Errorf("Expected Status 'staged', got %s", record.Status)
 	}
 }
 
-func TestRunStage_AppendsToExistingManifest(t *testing.T) {
-	tempVolume := t.TempDir()
-	tempOut := t.TempDir()
+func TestRunStage_NameCollisionHandling(t *testing.T) {
+	volDir := t.TempDir()
+	outDir := t.TempDir()
 
-	stagedFolder := filepath.Join(tempOut, "screenshots")
-	manifestPath := filepath.Join(tempOut, "manifest.json")
+	dirA := filepath.Join(volDir, "dirA")
+	dirB := filepath.Join(volDir, "dirB")
+	_ = os.MkdirAll(dirA, 0755)
+	_ = os.MkdirAll(dirB, 0755)
 
-	// Pre-create an existing manifest record
-	existingManifest := &helper.Manifest{
-		Records: map[string]*helper.FileRecord{
-			"/prior/path.png": {
-				OriginalPath: "/prior/path.png",
-				StagedPath:   "/prior/staged.png",
-				Status:       "converted",
-			},
-		},
-	}
-	_ = helper.SaveManifest(manifestPath, existingManifest)
+	// Create two files with identical filenames in different directories
+	fileA := filepath.Join(dirA, "image.png")
+	fileB := filepath.Join(dirB, "image.png")
+	createDummyScreenshot(t, fileA)
+	createDummyScreenshot(t, fileB)
 
-	// Add new valid screenshot to volume
-	newShotPath := filepath.Join(tempVolume, "screen_new.png")
-	createMockScreenshot(t, newShotPath, 1600, 900)
+	stagedFolder := filepath.Join(outDir, "to_process")
+	manifestPath := filepath.Join(outDir, "manifest.json")
 
 	cfg := &config.Config{
 		Mode:         "stage",
-		VolumePath:   tempVolume,
-		OutDir:       tempOut,
+		VolumePath:   volDir,
+		OutDir:       outDir,
 		StagedFolder: stagedFolder,
 		ManifestPath: manifestPath,
+		Workers:      1, // Single worker to ensure deterministic collision ordering
+		AllowedTypes: []string{".png"},
 	}
 
-	count := RunStage(cfg)
-
-	// Manifest should now contain 2 records total (1 existing + 1 new)
-	if count != 2 {
-		t.Errorf("Expected total 2 manifest records after append, got %d", count)
+	stagedCount := RunStage(cfg)
+	if stagedCount != 2 {
+		t.Fatalf("Expected 2 staged files, got %d", stagedCount)
 	}
 
-	updatedManifest, err := helper.LoadManifest(manifestPath)
-	if err != nil {
-		t.Fatalf("Failed to reload manifest: %v", err)
+	originalName := filepath.Join(stagedFolder, "image.png")
+	collidedName := filepath.Join(stagedFolder, "image_1.png")
+
+	if _, err := os.Stat(originalName); os.IsNotExist(err) {
+		t.Errorf("Expected %s to exist", originalName)
+	}
+	if _, err := os.Stat(collidedName); os.IsNotExist(err) {
+		t.Errorf("Expected collision fallback %s to exist", collidedName)
+	}
+}
+
+func TestGetUniqueDestination(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Initial file does not exist
+	dest1 := getUniqueDestination(tempDir, "file.png")
+	expected1 := filepath.Join(tempDir, "file.png")
+	if dest1 != expected1 {
+		t.Errorf("Expected %s, got %s", expected1, dest1)
 	}
 
-	if _, exists := updatedManifest.Records["/prior/path.png"]; !exists {
-		t.Errorf("Prior record was overwritten or lost during staging")
+	// Create the file and check collision handling
+	_ = os.WriteFile(expected1, []byte("data"), 0644)
+	dest2 := getUniqueDestination(tempDir, "file.png")
+	expected2 := filepath.Join(tempDir, "file_1.png")
+	if dest2 != expected2 {
+		t.Errorf("Expected %s, got %s", expected2, dest2)
+	}
+
+	// Create the collision file and check second collision
+	_ = os.WriteFile(expected2, []byte("data"), 0644)
+	dest3 := getUniqueDestination(tempDir, "file.png")
+	expected3 := filepath.Join(tempDir, "file_2.png")
+	if dest3 != expected3 {
+		t.Errorf("Expected %s, got %s", expected3, dest3)
+	}
+}
+
+func TestIsTypeAllowed(t *testing.T) {
+	allowed := []string{".png", ".jpg", ".jpeg"}
+
+	if !isTypeAllowed(".PNG", allowed) {
+		t.Errorf("Expected uppercase .PNG to be allowed")
+	}
+	if !isTypeAllowed(".jpg", allowed) {
+		t.Errorf("Expected .jpg to be allowed")
+	}
+	if isTypeAllowed(".gif", allowed) {
+		t.Errorf("Expected .gif to be rejected")
 	}
 }

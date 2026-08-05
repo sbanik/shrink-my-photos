@@ -16,8 +16,8 @@ import (
 func createDummyPNG(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
-	for x := 0; x < 100; x++ {
-		for y := 0; y < 100; y++ {
+	for x := range 100 {
+		for y := range 100 {
 			img.Set(x, y, color.RGBA{R: 100, G: 150, B: 200, A: 255})
 		}
 	}
