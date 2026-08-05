@@ -12,7 +12,7 @@ import (
 // Helper: Create a dummy PNG with specified dimensions
 func createDummyPNG(t *testing.T, path string, width, height int) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for x := 0; x < width; x++ {
+	for x := range width {
 		for y := 0; y < height; y++ {
 			img.Set(x, y, color.RGBA{100, 150, 200, 255})
 		}
