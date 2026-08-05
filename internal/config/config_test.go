@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Helper to reset flag state between tests
+// Helper to reset flag state between individual test executions
 func resetFlags() {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 }
@@ -16,6 +16,7 @@ func TestLoadConfig_MissingOutDir(t *testing.T) {
 	resetFlags()
 	os.Unsetenv("OUT_DIR")
 	os.Unsetenv("VOLUME_PATH")
+	os.Unsetenv("MODE")
 	os.Args = []string{"cmd"}
 
 	_, err := LoadConfig()
@@ -24,19 +25,30 @@ func TestLoadConfig_MissingOutDir(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_MissingVolumePathInNormalMode(t *testing.T) {
+func TestLoadConfig_InvalidMode(t *testing.T) {
 	resetFlags()
 	tempOut := t.TempDir()
-	os.Unsetenv("VOLUME_PATH")
-	os.Args = []string{"cmd", "-out", tempOut}
+	os.Args = []string{"cmd", "-out", tempOut, "-mode", "invalid_mode"}
 
 	_, err := LoadConfig()
 	if err == nil {
-		t.Errorf("Expected error when VOLUME_PATH and -volume are missing, got nil")
+		t.Errorf("Expected error for invalid mode 'invalid_mode', got nil")
 	}
 }
 
-func TestLoadConfig_SuccessNormalMode(t *testing.T) {
+func TestLoadConfig_MissingVolumeInStageMode(t *testing.T) {
+	resetFlags()
+	tempOut := t.TempDir()
+	os.Unsetenv("VOLUME_PATH")
+	os.Args = []string{"cmd", "-out", tempOut, "-mode", "stage"}
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Errorf("Expected error when volume is missing in 'stage' mode, got nil")
+	}
+}
+
+func TestLoadConfig_SuccessAllMode(t *testing.T) {
 	resetFlags()
 	tempVol := t.TempDir()
 	tempOut := t.TempDir()
@@ -45,9 +57,12 @@ func TestLoadConfig_SuccessNormalMode(t *testing.T) {
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("Unexpected config loading error: %v", err)
+		t.Fatalf("Unexpected error loading config: %v", err)
 	}
 
+	if cfg.Mode != "all" {
+		t.Errorf("Expected default mode 'all', got '%s'", cfg.Mode)
+	}
 	if cfg.VolumePath != tempVol {
 		t.Errorf("Expected VolumePath %s, got %s", tempVol, cfg.VolumePath)
 	}
@@ -60,9 +75,6 @@ func TestLoadConfig_SuccessNormalMode(t *testing.T) {
 	if cfg.Workers != 4 {
 		t.Errorf("Expected Workers 4, got %d", cfg.Workers)
 	}
-	if cfg.DeleteOriginals {
-		t.Errorf("Expected DeleteOriginals false, got true")
-	}
 
 	expectedStaged := filepath.Join(tempOut, "screenshots")
 	if cfg.StagedFolder != expectedStaged {
@@ -70,20 +82,20 @@ func TestLoadConfig_SuccessNormalMode(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_DeleteOriginalsModeWithoutVolume(t *testing.T) {
+func TestLoadConfig_DeleteModeWithoutVolumePath(t *testing.T) {
 	resetFlags()
 	tempOut := t.TempDir()
 
-	// In -delete-originals mode, -volume path is not mandatory
-	os.Args = []string{"cmd", "-out", tempOut, "-delete-originals"}
+	// In 'delete' or 'convert' mode, volume path is optional
+	os.Args = []string{"cmd", "-out", tempOut, "-mode", "delete"}
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig should succeed in delete-originals mode without volume path: %v", err)
+		t.Fatalf("LoadConfig should succeed in delete mode without volume path: %v", err)
 	}
 
-	if !cfg.DeleteOriginals {
-		t.Errorf("Expected DeleteOriginals true, got false")
+	if cfg.Mode != "delete" {
+		t.Errorf("Expected mode 'delete', got '%s'", cfg.Mode)
 	}
 }
 
@@ -94,20 +106,25 @@ func TestLoadConfig_EnvFallback(t *testing.T) {
 
 	os.Setenv("VOLUME_PATH", tempVol)
 	os.Setenv("OUT_DIR", tempOut)
+	os.Setenv("MODE", "CONVERT")
 	os.Setenv("QUALITY", "90")
 	defer func() {
 		os.Unsetenv("VOLUME_PATH")
 		os.Unsetenv("OUT_DIR")
+		os.Unsetenv("MODE")
 		os.Unsetenv("QUALITY")
 	}()
 
-	os.Args = []string{"cmd"} // No flags passed
+	os.Args = []string{"cmd"}
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("Failed to load config from env variables: %v", err)
+		t.Fatalf("Failed to load config from environment variables: %v", err)
 	}
 
+	if cfg.Mode != "convert" {
+		t.Errorf("Expected normalized mode 'convert', got '%s'", cfg.Mode)
+	}
 	if cfg.VolumePath != tempVol {
 		t.Errorf("Expected VolumePath from ENV %s, got %s", tempVol, cfg.VolumePath)
 	}
