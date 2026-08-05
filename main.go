@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/chai2010/webp"
+	"github.com/joho/godotenv"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -30,15 +32,33 @@ type Manifest struct {
 }
 
 func main() {
-	volumePath := flag.String("volume", "", "Source volume path to scan (e.g. /Volumes/MySSD)")
-	outDir := flag.String("out", "", "Output directory path for screenshots")
-	quality := flag.Float64("quality", 80.0, "WebP compression quality (0-100)")
-	workers := flag.Int("workers", runtime.NumCPU(), "Parallel workers")
+	// 1. Load environment variables from .env if available
+	_ = godotenv.Load()
+
+	// 2. Resolve default flag values from environment variables
+	envVolume := os.Getenv("VOLUME_PATH")
+	envOut := os.Getenv("OUT_DIR")
+
+	envQuality := 80.0
+	if q, err := strconv.ParseFloat(os.Getenv("QUALITY"), 64); err == nil {
+		envQuality = q
+	}
+
+	envWorkers := runtime.NumCPU()
+	if w, err := strconv.Atoi(os.Getenv("WORKERS")); err == nil && w > 0 {
+		envWorkers = w
+	}
+
+	// 3. Define CLI flags using environment values as defaults
+	volumePath := flag.String("volume", envVolume, "Source volume path to scan (e.g. /Volumes/MySSD)")
+	outDir := flag.String("out", envOut, "Output directory path for screenshots")
+	quality := flag.Float64("quality", envQuality, "WebP compression quality (0-100)")
+	workers := flag.Int("workers", envWorkers, "Parallel workers")
 	flag.Parse()
 
 	if *volumePath == "" || *outDir == "" {
-		fmt.Println("Error: Both -volume and -out paths are required.")
-		fmt.Println("Usage: ./shrinker -volume /Volumes/MySSD -out ~/Desktop/ProcessedScreenshots")
+		fmt.Println("Error: Both source volume and output directory paths are required.")
+		fmt.Println("Set VOLUME_PATH and OUT_DIR in your .env file, or pass -volume and -out flags.")
 		os.Exit(1)
 	}
 
@@ -94,24 +114,23 @@ func main() {
 	// ------------------------------------------------------------------
 	fmt.Println("\n=======================================================")
 	fmt.Printf("Staged %d screenshots to:\n%s\n\n", len(manifest.Records), stagedFolder)
-	fmt.Println("--> You can open the folder above to review or delete any unwanted images now.")
-	fmt.Print("--> Press ENTER when you are ready to convert to WebP and delete originals... ")
+	fmt.Println("--> Open the folder above to review or delete any unwanted images now.")
+	fmt.Print("--> Press ENTER when ready to convert to WebP and delete originals... ")
 
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 
 	// ------------------------------------------------------------------
 	// STEP 3: CONVERT WEBP & DELETE ORIGINALS
 	// ------------------------------------------------------------------
 	var pending []*FileRecord
 	for _, rec := range manifest.Records {
-		// Only process files that still exist (in case user deleted some manually)
 		if _, err := os.Stat(rec.StagedPath); err == nil && rec.Status == "staged" {
 			pending = append(pending, rec)
 		}
 	}
 
 	if len(pending) == 0 {
-		fmt.Println("No staged files found to process.")
+		fmt.Println("No staged files remaining to convert.")
 		return
 	}
 
@@ -136,17 +155,17 @@ func main() {
 			webpPath := r.StagedPath[:len(r.StagedPath)-len(ext)] + ".webp"
 			r.WebPPath = webpPath
 
-			// Convert staged copy to WebP
+			// Convert staged file to WebP
 			if err := convertToWebP(r.StagedPath, webpPath, float32(*quality)); err != nil {
 				r.Status = "failed"
 				atomic.AddInt64(&failedCount, 1)
 				return
 			}
 
-			// Clean up staged copy
+			// Delete staged file
 			_ = os.Remove(r.StagedPath)
 
-			// Delete original source image ONLY on successful conversion
+			// Delete original source image safely AFTER conversion completion
 			if err := os.Remove(r.OriginalPath); err != nil {
 				r.Status = "failed"
 				atomic.AddInt64(&failedCount, 1)
