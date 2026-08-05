@@ -3,7 +3,7 @@ Shrink screenshots for Low Disk space
 
 ## Build
 ```shell
-GOOS=darwin GOARCH=arm64 go build -o shrinker main.go detector.go
+GOOS=darwin GOARCH=arm64 go build -o shrinker ./cmd/shrinker
 ```
 
 ## Mode: Stage
@@ -27,3 +27,17 @@ GOOS=darwin GOARCH=arm64 go build -o shrinker main.go detector.go
 | -quality          | float64   | QUALITY     | 80.0      | WebP image encoding quality (range 1.0 to 100.0).                    |
 | -workers          | int       | WORKERS     | CPU Count | Number of concurrent goroutines used during conversion.              |
 | -delete-originals | bool      | —           | false     | Standalone mode: Deletes source files on SSD marked as `converted`.  |
+
+## Running Unit Tests:
+
+Run the test suite across all files:
+
+```shell
+go test -v ./...
+```
+
+To include race condition checks:
+
+```shell
+go test -v -race ./...
+```

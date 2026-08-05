@@ -1,7 +1,9 @@
-package main
+package detector
 
 import (
 	"image"
+	_ "image/jpeg" // Register JPEG decoder
+	_ "image/png"  // Register PNG decoder
 	"os"
 
 	"github.com/rwcarlsen/goexif/exif"
@@ -16,12 +18,12 @@ var standardAspectRatios = []float64{
 	19.5 / 9.0,  // 2.166 (Modern iPhone X, 11, 12, 13, 14, 15, 16 series / Android screen ratio)
 }
 
-func isScreenshot(path string) bool {
+func IsScreenshot(path string) bool {
 	// 1. Check metadata (EXIF data)
 	f, err := os.Open(path)
 	if err == nil {
 		defer f.Close()
-		
+
 		x, err := exif.Decode(f)
 		if err == nil {
 			// Check EXIF Software/UserComment tag for "screenshot" or Apple capture markers
@@ -53,14 +55,13 @@ func isScreenshot(path string) bool {
 	}
 
 	ratio := width / height
-	// Also check inverse ratio for vertical (portrait) screenshots
-	invRatio := height / width 
+	invRatio := height / width
 
 	// Compare ratio against standard display aspect ratios (with tiny error tolerance)
 	tolerance := 0.02
 	for _, stdRatio := range standardAspectRatios {
 		if (ratio >= stdRatio-tolerance && ratio <= stdRatio+tolerance) ||
-		   (invRatio >= stdRatio-tolerance && invRatio <= stdRatio+tolerance) {
+			(invRatio >= stdRatio-tolerance && invRatio <= stdRatio+tolerance) {
 			return true
 		}
 	}

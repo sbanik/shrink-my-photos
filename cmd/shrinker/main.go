@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -12,15 +11,16 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/chai2010/webp"
-	"github.com/joho/godotenv"
 	"github.com/schollz/progressbar/v3"
+
+	// Module internal package imports
+	"github.com/sbanik/shrink-my-photos/internal/config"
+	"github.com/sbanik/shrink-my-photos/internal/detector"
 )
 
 type FileRecord struct {
@@ -37,42 +37,15 @@ type Manifest struct {
 }
 
 func main() {
-	_ = godotenv.Load()
-
-	envVolume := os.Getenv("VOLUME_PATH")
-	envOut := os.Getenv("OUT_DIR")
-
-	envQuality := 80.0
-	if q, err := strconv.ParseFloat(os.Getenv("QUALITY"), 64); err == nil {
-		envQuality = q
-	}
-
-	envWorkers := runtime.NumCPU()
-	if w, err := strconv.Atoi(os.Getenv("WORKERS")); err == nil && w > 0 {
-		envWorkers = w
-	}
-
-	volumePath := flag.String("volume", envVolume, "Source volume path to scan (e.g. /Volumes/MySSD)")
-	outDir := flag.String("out", envOut, "Output directory path for screenshots")
-	quality := flag.Float64("quality", envQuality, "WebP compression quality (0-100)")
-	workers := flag.Int("workers", envWorkers, "Parallel workers")
-	deleteOriginals := flag.Bool("delete-originals", false, "Delete original files on volume for previously converted screenshots")
-	flag.Parse()
-
-	if *outDir == "" {
-		fmt.Println("Error: Output directory (-out) is required.")
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		fmt.Printf("Configuration Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	stagedFolder := filepath.Join(*outDir, "screenshots")
-	manifestPath := filepath.Join(*outDir, "manifest.json")
-	logPath := filepath.Join(*outDir, "error.log")
-
 	// Setup logger
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		fmt.Printf("Warning: Failed to create log file: %v\n", err)
-	} else {
+	logFile, err := os.OpenFile(cfg.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
 		defer logFile.Close()
 		log.SetOutput(logFile)
 		log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -81,32 +54,32 @@ func main() {
 	// ------------------------------------------------------------------
 	// MODE 1: DELETE ORIGINALS ONLY
 	// ------------------------------------------------------------------
-	if *deleteOriginals {
-		runDeleteOriginals(manifestPath)
+	if cfg.DeleteOriginals {
+		runDeleteOriginals(cfg.ManifestPath)
 		return
 	}
 
 	// ------------------------------------------------------------------
 	// MODE 2: STAGE & CONVERT (PRESERVE ORIGINALS)
 	// ------------------------------------------------------------------
-	if *volumePath == "" {
+	if cfg.StagedFolder == "" {
 		fmt.Println("Error: Source volume path (-volume) is required for detection and staging.")
 		os.Exit(1)
 	}
 
-	_ = os.MkdirAll(stagedFolder, 0755)
+	_ = os.MkdirAll(cfg.StagedFolder, 0755)
 
 	// STEP 1: DETECT & STAGE SCREENSHOTS
 	fmt.Println("Scanning volume for screenshots...")
 	var detected []string
 
-	_ = filepath.WalkDir(*volumePath, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(cfg.StagedFolder, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 		if !d.IsDir() && (ext == ".png" || ext == ".jpg" || ext == ".jpeg") {
-			if isScreenshot(path) {
+			if detector.IsScreenshot(path) {
 				detected = append(detected, path)
 			}
 		}
@@ -123,7 +96,7 @@ func main() {
 
 	for i, srcPath := range detected {
 		fileName := fmt.Sprintf("screenshot_%d_%s", i+1, filepath.Base(srcPath))
-		destPath := filepath.Join(stagedFolder, fileName)
+		destPath := filepath.Join(cfg.StagedFolder, fileName)
 
 		fi, err := os.Stat(srcPath)
 		var origSize int64
@@ -144,11 +117,11 @@ func main() {
 		_ = barStage.Add(1)
 	}
 
-	saveManifest(manifestPath, &manifest)
+	saveManifest(cfg.ManifestPath, &manifest)
 
 	// STEP 2: INTERACTIVE PAUSE FOR MANUAL VERIFICATION
 	fmt.Println("\n=======================================================")
-	fmt.Printf("Staged %d screenshots to:\n%s\n\n", len(manifest.Records), stagedFolder)
+	fmt.Printf("Staged %d screenshots to:\n%s\n\n", len(manifest.Records), cfg.StagedFolder)
 	fmt.Println("--> Review or delete any unwanted images in that folder now.")
 	fmt.Print("--> Press ENTER when ready to convert images to WebP... ")
 
@@ -169,7 +142,7 @@ func main() {
 
 	fmt.Println()
 	barConvert := progressbar.Default(int64(len(pending)), "Converting to WebP")
-	sem := make(chan struct{}, *workers)
+	sem := make(chan struct{}, cfg.Workers)
 	var wg sync.WaitGroup
 
 	var convertedCount, failedCount, totalBytesSaved int64
@@ -188,7 +161,7 @@ func main() {
 			webpPath := r.StagedPath[:len(r.StagedPath)-len(ext)] + ".webp"
 			r.WebPPath = webpPath
 
-			if err := convertToWebP(r.StagedPath, webpPath, float32(*quality)); err != nil {
+			if err := convertToWebP(r.StagedPath, webpPath, float32(cfg.Quality)); err != nil {
 				r.Status = "failed"
 				atomic.AddInt64(&failedCount, 1)
 				log.Printf("Conversion error for %s: %v", r.StagedPath, err)
@@ -214,7 +187,7 @@ func main() {
 	}
 
 	wg.Wait()
-	saveManifest(manifestPath, &manifest)
+	saveManifest(cfg.ManifestPath, &manifest)
 
 	fmt.Println("\n========================================")
 	fmt.Println("        PROCESS COMPLETE REPORT         ")
@@ -224,7 +197,7 @@ func main() {
 	fmt.Printf("Total Storage Saved    : %.2f MB\n", float64(totalBytesSaved)/(1024*1024))
 	fmt.Println("========================================")
 	fmt.Println("Original files remain untouched on your volume.")
-	fmt.Printf("To delete original files later, run:\n./shrinker -out %s -delete-originals\n", *outDir)
+	fmt.Printf("To delete original files later, run:\n./shrinker -out %s -delete-originals\n", cfg.OutDir)
 	fmt.Println("========================================")
 }
 
