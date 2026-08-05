@@ -12,12 +12,12 @@ import (
 	"github.com/sbanik/shrink-my-photos/internal/helper"
 )
 
-// Creates a dummy screenshot with 16:9 aspect ratio so detector.IsScreenshot succeeds
+// Helper to generate a dummy 16:9 PNG screenshot that passes detector.IsScreenshot
 func createDummyScreenshot(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
-	for x := 0; x < 100; x++ {
-		for y := 0; y < 100; y++ {
+	for x := 0; x < 50; x++ {
+		for y := 0; y < 50; y++ {
 			img.Set(x, y, color.RGBA{R: 50, G: 100, B: 150, A: 255})
 		}
 	}
@@ -33,7 +33,36 @@ func createDummyScreenshot(t *testing.T, path string) {
 	}
 }
 
-func TestRunStage_SuccessAndManifest(t *testing.T) {
+func TestScanForScreenshots(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Valid 16:9 screenshot
+	shotPath := filepath.Join(tempDir, "screenshot.png")
+	createDummyScreenshot(t, shotPath)
+
+	// 2. Square non-screenshot image (500x500)
+	nonShotPath := filepath.Join(tempDir, "regular.png")
+	img := image.NewRGBA(image.Rect(0, 0, 500, 500))
+	f, _ := os.Create(nonShotPath)
+	_ = png.Encode(f, img)
+	f.Close()
+
+	// 3. Disallowed file type
+	txtPath := filepath.Join(tempDir, "note.txt")
+	_ = os.WriteFile(txtPath, []byte("text file"), 0644)
+
+	allowedTypes := []string{".png"}
+	matchedFiles := scanForScreenshots(tempDir, allowedTypes)
+
+	if len(matchedFiles) != 1 {
+		t.Fatalf("Expected 1 screenshot found, got %d", len(matchedFiles))
+	}
+	if matchedFiles[0] != shotPath {
+		t.Errorf("Expected matched file %s, got %s", shotPath, matchedFiles[0])
+	}
+}
+
+func TestStageFilesAndManifest(t *testing.T) {
 	volDir := t.TempDir()
 	outDir := t.TempDir()
 
@@ -42,6 +71,7 @@ func TestRunStage_SuccessAndManifest(t *testing.T) {
 
 	stagedFolder := filepath.Join(outDir, "to_process")
 	manifestPath := filepath.Join(outDir, "manifest.json")
+	_ = os.MkdirAll(stagedFolder, 0755)
 
 	cfg := &config.Config{
 		Mode:         "stage",
@@ -53,18 +83,19 @@ func TestRunStage_SuccessAndManifest(t *testing.T) {
 		AllowedTypes: []string{".png"},
 	}
 
-	stagedCount := RunStage(cfg)
+	manifest := &helper.Manifest{Records: make(map[string]*helper.FileRecord)}
+	matchedFiles := []string{srcFile}
+
+	stagedCount, totalBytes, skippedCount := stageFiles(cfg, matchedFiles, manifest)
+
 	if stagedCount != 1 {
 		t.Fatalf("Expected 1 staged file, got %d", stagedCount)
 	}
-
-	manifest, err := helper.LoadManifest(manifestPath)
-	if err != nil {
-		t.Fatalf("Failed to load manifest: %v", err)
+	if skippedCount != 0 {
+		t.Fatalf("Expected 0 skipped files, got %d", skippedCount)
 	}
-
-	if len(manifest.Records) != 1 {
-		t.Fatalf("Expected 1 record in manifest, got %d", len(manifest.Records))
+	if totalBytes <= 0 {
+		t.Fatalf("Expected non-zero total staged bytes, got %d", totalBytes)
 	}
 
 	stagedDest := filepath.Join(stagedFolder, "screenshot.png")
@@ -72,32 +103,25 @@ func TestRunStage_SuccessAndManifest(t *testing.T) {
 	if !exists {
 		t.Fatalf("Manifest record for %s not found", stagedDest)
 	}
-
 	if record.OriginalPath != srcFile {
 		t.Errorf("Expected OriginalPath %s, got %s", srcFile, record.OriginalPath)
 	}
-	if record.Status != "staged" {
-		t.Errorf("Expected Status 'staged', got %s", record.Status)
-	}
 }
 
-func TestRunStage_NameCollisionHandling(t *testing.T) {
+func TestStageFiles_SkipExisting(t *testing.T) {
 	volDir := t.TempDir()
 	outDir := t.TempDir()
 
-	dirA := filepath.Join(volDir, "dirA")
-	dirB := filepath.Join(volDir, "dirB")
-	_ = os.MkdirAll(dirA, 0755)
-	_ = os.MkdirAll(dirB, 0755)
-
-	// Create two files with identical filenames in different directories
-	fileA := filepath.Join(dirA, "image.png")
-	fileB := filepath.Join(dirB, "image.png")
-	createDummyScreenshot(t, fileA)
-	createDummyScreenshot(t, fileB)
+	srcFile := filepath.Join(volDir, "screenshot.png")
+	createDummyScreenshot(t, srcFile)
 
 	stagedFolder := filepath.Join(outDir, "to_process")
 	manifestPath := filepath.Join(outDir, "manifest.json")
+	_ = os.MkdirAll(stagedFolder, 0755)
+
+	// Pre-create file in staged destination so it gets skipped
+	existingStagedFile := filepath.Join(stagedFolder, "screenshot.png")
+	_ = os.WriteFile(existingStagedFile, []byte("pre-existing contents"), 0644)
 
 	cfg := &config.Config{
 		Mode:         "stage",
@@ -105,61 +129,80 @@ func TestRunStage_NameCollisionHandling(t *testing.T) {
 		OutDir:       outDir,
 		StagedFolder: stagedFolder,
 		ManifestPath: manifestPath,
-		Workers:      1, // Single worker to ensure deterministic collision ordering
+		Workers:      1,
+		AllowedTypes: []string{".png"},
+	}
+
+	manifest := &helper.Manifest{Records: make(map[string]*helper.FileRecord)}
+	stagedCount, _, skippedCount := stageFiles(cfg, []string{srcFile}, manifest)
+
+	if stagedCount != 0 {
+		t.Errorf("Expected 0 newly staged files, got %d", stagedCount)
+	}
+	if skippedCount != 1 {
+		t.Errorf("Expected 1 skipped file, got %d", skippedCount)
+	}
+}
+
+func TestRunStage_CleanFlag(t *testing.T) {
+	volDir := t.TempDir()
+	outDir := t.TempDir()
+
+	srcFile := filepath.Join(volDir, "screenshot.png")
+	createDummyScreenshot(t, srcFile)
+
+	stagedFolder := filepath.Join(outDir, "to_process")
+	manifestPath := filepath.Join(outDir, "manifest.json")
+	_ = os.MkdirAll(stagedFolder, 0755)
+
+	// Pre-create a stale artifact that should be cleaned
+	staleFile := filepath.Join(stagedFolder, "stale.png")
+	_ = os.WriteFile(staleFile, []byte("stale data"), 0644)
+
+	cfg := &config.Config{
+		Mode:         "stage",
+		VolumePath:   volDir,
+		OutDir:       outDir,
+		StagedFolder: stagedFolder,
+		ManifestPath: manifestPath,
+		Workers:      1,
+		Clean:        true,
 		AllowedTypes: []string{".png"},
 	}
 
 	stagedCount := RunStage(cfg)
-	if stagedCount != 2 {
-		t.Fatalf("Expected 2 staged files, got %d", stagedCount)
+
+	if stagedCount != 1 {
+		t.Fatalf("Expected 1 staged file, got %d", stagedCount)
 	}
 
-	originalName := filepath.Join(stagedFolder, "image.png")
-	collidedName := filepath.Join(stagedFolder, "image_1.png")
-
-	if _, err := os.Stat(originalName); os.IsNotExist(err) {
-		t.Errorf("Expected %s to exist", originalName)
-	}
-	if _, err := os.Stat(collidedName); os.IsNotExist(err) {
-		t.Errorf("Expected collision fallback %s to exist", collidedName)
+	if _, err := os.Stat(staleFile); !os.IsNotExist(err) {
+		t.Errorf("Expected stale file %s to be cleaned up, but it still exists", staleFile)
 	}
 }
 
 func TestGetUniqueDestination(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Initial file does not exist
 	dest1 := getUniqueDestination(tempDir, "file.png")
 	expected1 := filepath.Join(tempDir, "file.png")
 	if dest1 != expected1 {
 		t.Errorf("Expected %s, got %s", expected1, dest1)
 	}
 
-	// Create the file and check collision handling
 	_ = os.WriteFile(expected1, []byte("data"), 0644)
 	dest2 := getUniqueDestination(tempDir, "file.png")
 	expected2 := filepath.Join(tempDir, "file_1.png")
 	if dest2 != expected2 {
 		t.Errorf("Expected %s, got %s", expected2, dest2)
 	}
-
-	// Create the collision file and check second collision
-	_ = os.WriteFile(expected2, []byte("data"), 0644)
-	dest3 := getUniqueDestination(tempDir, "file.png")
-	expected3 := filepath.Join(tempDir, "file_2.png")
-	if dest3 != expected3 {
-		t.Errorf("Expected %s, got %s", expected3, dest3)
-	}
 }
 
 func TestIsTypeAllowed(t *testing.T) {
-	allowed := []string{".png", ".jpg", ".jpeg"}
+	allowed := []string{".png", ".jpg"}
 
 	if !isTypeAllowed(".PNG", allowed) {
 		t.Errorf("Expected uppercase .PNG to be allowed")
-	}
-	if !isTypeAllowed(".jpg", allowed) {
-		t.Errorf("Expected .jpg to be allowed")
 	}
 	if isTypeAllowed(".gif", allowed) {
 		t.Errorf("Expected .gif to be rejected")

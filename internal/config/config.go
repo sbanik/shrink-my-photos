@@ -20,7 +20,8 @@ type Config struct {
 	LogPath      string
 	Quality      float64
 	Workers      int
-	AllowedTypes []string // Stored as normalized slice: []string{".png", ".jpg", ".jpeg"}
+	Clean        bool
+	AllowedTypes []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -32,6 +33,7 @@ func LoadConfig() (*Config, error) {
 		outFlag   string
 		qualFlag  float64
 		workFlag  int
+		cleanFlag bool
 		typesFlag string
 	)
 
@@ -40,12 +42,12 @@ func LoadConfig() (*Config, error) {
 	flag.StringVar(&outFlag, "out", os.Getenv("OUT_DIR"), "Output directory path")
 	flag.Float64Var(&qualFlag, "quality", getEnvFloat("QUALITY", 80.0), "WebP quality target (0.0 - 100.0)")
 	flag.IntVar(&workFlag, "workers", getEnvInt("WORKERS", 4), "Number of concurrent workers")
+	flag.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_STAGED", false), "Clean staged folder and manifest before staging")
 	flag.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan (e.g. png,jpg,jpeg)")
 	flag.Parse()
 
 	mode := strings.ToLower(modeFlag)
 
-	// Validate Mode
 	validModes := map[string]bool{
 		"all":     true,
 		"stage":   true,
@@ -57,17 +59,14 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid mode '%s': must be one of all, stage, sync, convert, delete", modeFlag)
 	}
 
-	// Validate required output directory
 	if outFlag == "" {
 		return nil, fmt.Errorf("output directory path must be provided via -out flag or OUT_DIR env variable")
 	}
 
-	// Validate required volume path for modes that scan a directory
 	if (mode == "stage" || mode == "all") && volFlag == "" {
 		return nil, fmt.Errorf("volume path must be provided via -volume flag or VOLUME_PATH env variable for mode '%s'", mode)
 	}
 
-	// Normalize allowed types into a lookup-friendly format (.png, .jpg, etc.)
 	rawTypes := strings.Split(typesFlag, ",")
 	var allowedTypes []string
 	for _, t := range rawTypes {
@@ -93,6 +92,7 @@ func LoadConfig() (*Config, error) {
 		LogPath:      logPath,
 		Quality:      qualFlag,
 		Workers:      workFlag,
+		Clean:        cleanFlag,
 		AllowedTypes: allowedTypes,
 	}, nil
 }
@@ -116,6 +116,15 @@ func getEnvFloat(key string, fallback float64) float64 {
 func getEnvInt(key string, fallback int) int {
 	if val, ok := os.LookupEnv(key); ok && val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if val, ok := os.LookupEnv(key); ok && val != "" {
+		if parsed, err := strconv.ParseBool(val); err == nil {
 			return parsed
 		}
 	}

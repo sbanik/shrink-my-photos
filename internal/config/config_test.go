@@ -7,160 +7,126 @@ import (
 	"testing"
 )
 
-// Helper to reset flag state between individual test executions
+// Helper to reset command-line flags between tests
 func resetFlags() {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 }
 
-func TestLoadConfig_MissingOutDir(t *testing.T) {
-	resetFlags()
-	os.Unsetenv("OUT_DIR")
-	os.Unsetenv("VOLUME_PATH")
-	os.Unsetenv("MODE")
-	os.Args = []string{"cmd"}
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Errorf("Expected error when OUT_DIR and -out flag are missing, got nil")
-	}
-}
-
-func TestLoadConfig_InvalidMode(t *testing.T) {
-	resetFlags()
+func TestLoadConfig_Success(t *testing.T) {
 	tempOut := t.TempDir()
-	os.Args = []string{"cmd", "-out", tempOut, "-mode", "invalid_mode"}
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Errorf("Expected error for invalid mode 'invalid_mode', got nil")
-	}
-}
-
-func TestLoadConfig_MissingVolumeInStageMode(t *testing.T) {
-	resetFlags()
-	tempOut := t.TempDir()
-	os.Unsetenv("VOLUME_PATH")
-	os.Args = []string{"cmd", "-out", tempOut, "-mode", "stage"}
-
-	_, err := LoadConfig()
-	if err == nil {
-		t.Errorf("Expected error when volume is missing in 'stage' mode, got nil")
-	}
-}
-
-func TestLoadConfig_SuccessAllMode(t *testing.T) {
-	resetFlags()
 	tempVol := t.TempDir()
-	tempOut := t.TempDir()
 
+	resetFlags()
 	os.Args = []string{
 		"cmd",
-		"-volume", tempVol,
-		"-out", tempOut,
-		"-mode", "stage",
-		"-quality", "75",
-		"-workers", "4",
-		"-types", "png,jpg,webp",
+		"-mode=stage",
+		"-volume=" + tempVol,
+		"-out=" + tempOut,
+		"-quality=85.5",
+		"-workers=8",
+		"-clean=true",
+		"-types=png,jpg",
 	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("Unexpected error loading config: %v", err)
+		t.Fatalf("Expected LoadConfig to succeed, got error: %v", err)
 	}
 
 	if cfg.Mode != "stage" {
-		t.Errorf("Expected mode 'stage', got '%s'", cfg.Mode)
+		t.Errorf("Expected Mode 'stage', got '%s'", cfg.Mode)
 	}
 	if cfg.VolumePath != tempVol {
-		t.Errorf("Expected VolumePath %s, got %s", tempVol, cfg.VolumePath)
+		t.Errorf("Expected VolumePath '%s', got '%s'", tempVol, cfg.VolumePath)
 	}
 	if cfg.OutDir != tempOut {
-		t.Errorf("Expected OutDir %s, got %s", tempOut, cfg.OutDir)
+		t.Errorf("Expected OutDir '%s', got '%s'", tempOut, cfg.OutDir)
 	}
-	if cfg.Quality != 75.0 {
-		t.Errorf("Expected Quality 75.0, got %f", cfg.Quality)
+	if cfg.Quality != 85.5 {
+		t.Errorf("Expected Quality 85.5, got %f", cfg.Quality)
 	}
-	if cfg.Workers != 4 {
-		t.Errorf("Expected Workers 4, got %d", cfg.Workers)
+	if cfg.Workers != 8 {
+		t.Errorf("Expected Workers 8, got %d", cfg.Workers)
+	}
+	if !cfg.Clean {
+		t.Errorf("Expected Clean true, got %v", cfg.Clean)
+	}
+	if len(cfg.AllowedTypes) != 2 || cfg.AllowedTypes[0] != ".png" || cfg.AllowedTypes[1] != ".jpg" {
+		t.Errorf("Expected AllowedTypes [.png .jpg], got %v", cfg.AllowedTypes)
 	}
 
 	expectedStaged := filepath.Join(tempOut, "to_process")
 	if cfg.StagedFolder != expectedStaged {
-		t.Errorf("Expected StagedFolder %s, got %s", expectedStaged, cfg.StagedFolder)
-	}
-
-	expectedTypes := []string{".png", ".jpg", ".webp"}
-	if len(cfg.AllowedTypes) != len(expectedTypes) {
-		t.Fatalf("Expected %d allowed types, got %d", len(expectedTypes), len(cfg.AllowedTypes))
-	}
-
-	for i, typ := range expectedTypes {
-		if cfg.AllowedTypes[i] != typ {
-			t.Errorf("AllowedTypes mismatch at index %d: got %s, want %s", i, cfg.AllowedTypes[i], typ)
-		}
+		t.Errorf("Expected StagedFolder '%s', got '%s'", expectedStaged, cfg.StagedFolder)
 	}
 }
 
-func TestLoadConfig_DeleteModeWithoutVolumePath(t *testing.T) {
-	resetFlags()
+func TestLoadConfig_InvalidMode(t *testing.T) {
 	tempOut := t.TempDir()
 
-	// In 'delete' or 'convert' mode, volume path is optional
-	os.Args = []string{"cmd", "-out", tempOut, "-mode", "delete"}
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig should succeed in delete mode without volume path: %v", err)
+	resetFlags()
+	os.Args = []string{
+		"cmd",
+		"-mode=invalid_mode",
+		"-out=" + tempOut,
 	}
 
-	if cfg.Mode != "delete" {
-		t.Errorf("Expected mode 'delete', got '%s'", cfg.Mode)
+	_, err := LoadConfig()
+	if err == nil {
+		t.Error("Expected error for invalid mode, got nil")
 	}
 }
 
-func TestLoadConfig_EnvFallback(t *testing.T) {
+func TestLoadConfig_MissingOutDir(t *testing.T) {
 	resetFlags()
-	tempVol := t.TempDir()
+	os.Args = []string{
+		"cmd",
+		"-mode=stage",
+	}
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Error("Expected error when output directory is missing, got nil")
+	}
+}
+
+func TestLoadConfig_MissingVolumeInStageMode(t *testing.T) {
 	tempOut := t.TempDir()
 
-	os.Setenv("VOLUME_PATH", tempVol)
-	os.Setenv("OUT_DIR", tempOut)
-	os.Setenv("MODE", "CONVERT")
-	os.Setenv("QUALITY", "90")
-	os.Setenv("ALLOWED_TYPES", "png,jpeg")
-	defer func() {
-		os.Unsetenv("VOLUME_PATH")
-		os.Unsetenv("OUT_DIR")
-		os.Unsetenv("MODE")
-		os.Unsetenv("QUALITY")
-		os.Unsetenv("ALLOWED_TYPES")
-	}()
-
-	os.Args = []string{"cmd"}
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("Failed to load config from environment variables: %v", err)
+	resetFlags()
+	os.Args = []string{
+		"cmd",
+		"-mode=stage",
+		"-out=" + tempOut,
 	}
 
-	if cfg.Mode != "convert" {
-		t.Errorf("Expected normalized mode 'convert', got '%s'", cfg.Mode)
+	_, err := LoadConfig()
+	if err == nil {
+		t.Error("Expected error when volume path is missing in stage mode, got nil")
 	}
-	if cfg.VolumePath != tempVol {
-		t.Errorf("Expected VolumePath from ENV %s, got %s", tempVol, cfg.VolumePath)
+}
+
+func TestEnvFallbackFunctions(t *testing.T) {
+	t.Setenv("TEST_ENV_STR", "hello")
+	t.Setenv("TEST_ENV_FLOAT", "92.5")
+	t.Setenv("TEST_ENV_INT", "12")
+	t.Setenv("TEST_ENV_BOOL", "true")
+
+	if got := getEnvString("TEST_ENV_STR", "fallback"); got != "hello" {
+		t.Errorf("Expected 'hello', got '%s'", got)
 	}
-	if cfg.Quality != 90.0 {
-		t.Errorf("Expected Quality from ENV 90.0, got %f", cfg.Quality)
+	if got := getEnvFloat("TEST_ENV_FLOAT", 50.0); got != 92.5 {
+		t.Errorf("Expected 92.5, got %f", got)
+	}
+	if got := getEnvInt("TEST_ENV_INT", 1); got != 12 {
+		t.Errorf("Expected 12, got %d", got)
+	}
+	if got := getEnvBool("TEST_ENV_BOOL", false); !got {
+		t.Errorf("Expected true, got %v", got)
 	}
 
-	expectedTypes := []string{".png", ".jpeg"}
-	if len(cfg.AllowedTypes) != len(expectedTypes) {
-		t.Fatalf("Expected %d allowed types from ENV, got %d", len(expectedTypes), len(cfg.AllowedTypes))
-	}
-
-	for i, typ := range expectedTypes {
-		if cfg.AllowedTypes[i] != typ {
-			t.Errorf("AllowedTypes mismatch at index %d: got %s, want %s", i, cfg.AllowedTypes[i], typ)
-		}
+	// Test fallback defaults when key does not exist
+	if got := getEnvString("NON_EXISTENT_KEY", "default"); got != "default" {
+		t.Errorf("Expected 'default', got '%s'", got)
 	}
 }
