@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sbanik/shrink-my-photos/internal/helper"
+	"github.com/sbanik/shrink-my-photos/internal/processor"
 )
 
 // Helper to generate a dummy PNG file with custom dimensions
@@ -36,7 +39,7 @@ func TestCopyFile(t *testing.T) {
 
 	createTestPNG(t, src, 100, 100)
 
-	if err := copyFile(src, dst); err != nil {
+	if err := helper.CopyFile(src, dst); err != nil {
 		t.Fatalf("copyFile failed: %v", err)
 	}
 
@@ -55,7 +58,7 @@ func TestConvertToWebP(t *testing.T) {
 
 	createTestPNG(t, src, 200, 200)
 
-	err := convertToWebP(src, dst, 80.0)
+	err := helper.ConvertToWebP(src, dst, 80.0)
 	if err != nil {
 		t.Fatalf("convertToWebP returned error: %v", err)
 	}
@@ -73,8 +76,8 @@ func TestManifestSaveAndLoad(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "manifest.json")
 
-	originalManifest := Manifest{
-		Records: map[string]*FileRecord{
+	originalManifest := helper.Manifest{
+		Records: map[string]*helper.FileRecord{
 			"/staged/screenshot_1.png": {
 				OriginalPath: "/volume/screenshot_1.png",
 				StagedPath:   "/staged/screenshot_1.png",
@@ -84,9 +87,9 @@ func TestManifestSaveAndLoad(t *testing.T) {
 		},
 	}
 
-	saveManifest(manifestPath, &originalManifest)
+	helper.SaveManifest(manifestPath, &originalManifest)
 
-	loadedManifest, err := loadManifest(manifestPath)
+	loadedManifest, err := helper.LoadManifest(manifestPath)
 	if err != nil {
 		t.Fatalf("loadManifest failed: %v", err)
 	}
@@ -110,8 +113,8 @@ func TestRunDeleteOriginals(t *testing.T) {
 	origFile := filepath.Join(sourceDir, "orig.png")
 	createTestPNG(t, origFile, 100, 100)
 
-	manifest := Manifest{
-		Records: map[string]*FileRecord{
+	manifest := helper.Manifest{
+		Records: map[string]*helper.FileRecord{
 			"/staged/orig.png": {
 				OriginalPath: origFile,
 				StagedPath:   "/staged/orig.png",
@@ -119,10 +122,10 @@ func TestRunDeleteOriginals(t *testing.T) {
 			},
 		},
 	}
-	saveManifest(manifestPath, &manifest)
+	helper.SaveManifest(manifestPath, &manifest)
 
 	// Execute deletion run
-	runDeleteOriginals(manifestPath)
+	processor.RunDeleteOriginals(manifestPath)
 
 	// Original file must be gone
 	if _, err := os.Stat(origFile); !os.IsNotExist(err) {
@@ -130,7 +133,7 @@ func TestRunDeleteOriginals(t *testing.T) {
 	}
 
 	// Manifest status must be updated to 'completed'
-	updatedManifest, _ := loadManifest(manifestPath)
+	updatedManifest, _ := helper.LoadManifest(manifestPath)
 	if updatedManifest.Records["/staged/orig.png"].Status != "completed" {
 		t.Errorf("Expected manifest status to be 'completed', got '%s'", updatedManifest.Records["/staged/orig.png"].Status)
 	}

@@ -60,8 +60,8 @@ func TestLoadConfig_SuccessAllMode(t *testing.T) {
 		t.Fatalf("Unexpected error loading config: %v", err)
 	}
 
-	if cfg.Mode != "all" {
-		t.Errorf("Expected default mode 'all', got '%s'", cfg.Mode)
+	if cfg.Mode != "stage" {
+		t.Errorf("Expected default mode 'stage', got '%s'", cfg.Mode)
 	}
 	if cfg.VolumePath != tempVol {
 		t.Errorf("Expected VolumePath %s, got %s", tempVol, cfg.VolumePath)
