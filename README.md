@@ -1,6 +1,31 @@
 # shrink-my-photos
 Shrink screenshots for Low Disk space
 
+## Setup
+
+### Environment Variables
+Setup .env file
+
+```
+# Execution mode
+MODE=stage
+
+# Path to your target screenshots directory
+VOLUME_PATH=
+
+# Path to your target output directory
+OUT_DIR=
+
+# Compression Quality (0 - 100)
+QUALITY=80
+
+# Maximum concurrent workers (leave blank to default to CPU core count)
+WORKERS= 
+
+# Comma-separated extensions to scan (e.g. png,jpg,jpeg)
+ALLOWED_TYPES=png,jpg,jpeg
+```
+
 ## Build
 
 ```shell
