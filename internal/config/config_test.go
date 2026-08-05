@@ -53,7 +53,15 @@ func TestLoadConfig_SuccessAllMode(t *testing.T) {
 	tempVol := t.TempDir()
 	tempOut := t.TempDir()
 
-	os.Args = []string{"cmd", "-volume", tempVol, "-out", tempOut, "-quality", "75", "-workers", "4"}
+	os.Args = []string{
+		"cmd",
+		"-volume", tempVol,
+		"-out", tempOut,
+		"-mode", "stage",
+		"-quality", "75",
+		"-workers", "4",
+		"-types", "png,jpg,webp",
+	}
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -61,7 +69,7 @@ func TestLoadConfig_SuccessAllMode(t *testing.T) {
 	}
 
 	if cfg.Mode != "stage" {
-		t.Errorf("Expected default mode 'stage', got '%s'", cfg.Mode)
+		t.Errorf("Expected mode 'stage', got '%s'", cfg.Mode)
 	}
 	if cfg.VolumePath != tempVol {
 		t.Errorf("Expected VolumePath %s, got %s", tempVol, cfg.VolumePath)
@@ -76,9 +84,20 @@ func TestLoadConfig_SuccessAllMode(t *testing.T) {
 		t.Errorf("Expected Workers 4, got %d", cfg.Workers)
 	}
 
-	expectedStaged := filepath.Join(tempOut, "screenshots")
+	expectedStaged := filepath.Join(tempOut, "to_process")
 	if cfg.StagedFolder != expectedStaged {
 		t.Errorf("Expected StagedFolder %s, got %s", expectedStaged, cfg.StagedFolder)
+	}
+
+	expectedTypes := []string{".png", ".jpg", ".webp"}
+	if len(cfg.AllowedTypes) != len(expectedTypes) {
+		t.Fatalf("Expected %d allowed types, got %d", len(expectedTypes), len(cfg.AllowedTypes))
+	}
+
+	for i, typ := range expectedTypes {
+		if cfg.AllowedTypes[i] != typ {
+			t.Errorf("AllowedTypes mismatch at index %d: got %s, want %s", i, cfg.AllowedTypes[i], typ)
+		}
 	}
 }
 
@@ -108,11 +127,13 @@ func TestLoadConfig_EnvFallback(t *testing.T) {
 	os.Setenv("OUT_DIR", tempOut)
 	os.Setenv("MODE", "CONVERT")
 	os.Setenv("QUALITY", "90")
+	os.Setenv("ALLOWED_TYPES", "png,jpeg")
 	defer func() {
 		os.Unsetenv("VOLUME_PATH")
 		os.Unsetenv("OUT_DIR")
 		os.Unsetenv("MODE")
 		os.Unsetenv("QUALITY")
+		os.Unsetenv("ALLOWED_TYPES")
 	}()
 
 	os.Args = []string{"cmd"}
@@ -130,5 +151,16 @@ func TestLoadConfig_EnvFallback(t *testing.T) {
 	}
 	if cfg.Quality != 90.0 {
 		t.Errorf("Expected Quality from ENV 90.0, got %f", cfg.Quality)
+	}
+
+	expectedTypes := []string{".png", ".jpeg"}
+	if len(cfg.AllowedTypes) != len(expectedTypes) {
+		t.Fatalf("Expected %d allowed types from ENV, got %d", len(expectedTypes), len(cfg.AllowedTypes))
+	}
+
+	for i, typ := range expectedTypes {
+		if cfg.AllowedTypes[i] != typ {
+			t.Errorf("AllowedTypes mismatch at index %d: got %s, want %s", i, cfg.AllowedTypes[i], typ)
+		}
 	}
 }

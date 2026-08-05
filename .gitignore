@@ -1,0 +1,12 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output binary from go build if named after folder/project
+/shrinker

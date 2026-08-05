@@ -41,7 +41,7 @@ func RunConvert(cfg *config.Config) {
 	sem := make(chan struct{}, cfg.Workers)
 	var wg sync.WaitGroup
 
-	var convertedCount, failedCount, totalBytesSaved int64
+	var convertedCount, skippedCount, failedCount, totalBytesSaved int64
 
 	for _, rec := range pending {
 		wg.Add(1)
@@ -68,6 +68,16 @@ func RunConvert(cfg *config.Config) {
 			if err == nil {
 				r.WebPSize = webpInfo.Size()
 				bytesSaved := r.OriginalSize - r.WebPSize
+
+				// Check if space saved is less than 5%
+				savingsRatio := float64(bytesSaved) / float64(r.OriginalSize)
+				if savingsRatio < 0.05 {
+					r.Status = "skipped_low_savings"
+					_ = os.Remove(webpPath) // Delete inefficient WebP output
+					atomic.AddInt64(&skippedCount, 1)
+					return
+				}
+
 				if bytesSaved > 0 {
 					atomic.AddInt64(&totalBytesSaved, bytesSaved)
 				}
@@ -86,11 +96,8 @@ func RunConvert(cfg *config.Config) {
 	fmt.Println("        PROCESS COMPLETE REPORT         ")
 	fmt.Println("========================================")
 	fmt.Printf("Successfully Converted : %d\n", convertedCount)
+	fmt.Printf("Skipped (Low Savings)  : %d\n", skippedCount)
 	fmt.Printf("Failed Conversions     : %d\n", failedCount)
 	fmt.Printf("Total Storage Saved    : %.2f MB\n", float64(totalBytesSaved)/(1024*1024))
 	fmt.Println("========================================")
-	fmt.Println("Original files remain untouched on your volume.")
-	fmt.Printf("To delete original files later, run:\n./shrinker -mode=delete -out %s\n", cfg.OutDir)
-	fmt.Println("========================================")
 }
-
