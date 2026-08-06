@@ -25,6 +25,10 @@ func main() {
 		processor.PrintHiddenFileList(cfg.ManifestPath)
 		return
 	}
+	if cfg.Mode == "duplicates" {
+		processor.RunDuplicateReview(cfg.DuplicateFolders, cfg.AllowedTypes, bufio.NewReader(os.Stdin))
+		return
+	}
 
 	// Setup logger to capture errors on disk
 	_ = os.MkdirAll(filepath.Dir(cfg.LogPath), 0755)
@@ -94,9 +98,7 @@ func main() {
 		if cfg.DeleteOriginals {
 			fmt.Println("Deleting converted original files...")
 			processor.RunDeleteOriginals(cfg.ManifestPath)
-			if !cfg.ProcessedPathProvided {
-				processor.RunFinalize(cfg)
-			}
+			processor.RunFinalize(cfg)
 		} else {
 			fmt.Println("Original files were kept because DELETE_ORIGINALS is false.")
 		}

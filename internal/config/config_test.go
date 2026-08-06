@@ -70,6 +70,25 @@ func TestLoadConfig_RequiresVolume(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_DuplicatesModeUsesSelectedFoldersWithoutVolume(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	t.Setenv("MODE", "duplicates")
+	t.Setenv("VOLUME_PATH", "")
+	t.Setenv("MULTI_FOLDER", first+","+second)
+	t.Setenv("STATE_DIR", t.TempDir())
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.DuplicateFolders) != 2 || cfg.DuplicateFolders[0] != first || cfg.DuplicateFolders[1] != second {
+		t.Fatalf("DuplicateFolders = %v", cfg.DuplicateFolders)
+	}
+	if cfg.VolumePath != first {
+		t.Fatalf("VolumePath = %q, want %q", cfg.VolumePath, first)
+	}
+}
+
 func TestLoadConfig_RecognizesDeletionAndExternalOutputFlags(t *testing.T) {
 	volume := t.TempDir()
 	processed := t.TempDir()

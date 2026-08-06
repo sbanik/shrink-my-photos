@@ -41,6 +41,7 @@ type Config struct {
 	DeleteOriginals       bool
 	HiddenFileList        bool
 	AllowedTypes          []string
+	DuplicateFolders      []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -49,13 +50,13 @@ func LoadConfig() (*Config, error) {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	var modeFlag, volFlag, processedFlag, stateFlag, typesFlag string
+	var modeFlag, volFlag, processedFlag, stateFlag, typesFlag, duplicateFoldersFlag string
 	var qualityFlag float64
 	var targetFlag, smallFlag int64
 	var workersFlag int
 	var cleanFlag, deleteHiddenFlag, deleteOriginalsFlag, hiddenFileListFlag bool
 
-	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "all"), "Execution mode: auto, all, stage, sync, convert, delete")
+	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "all"), "Execution mode: auto, all, stage, sync, convert, delete, duplicates")
 	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source directory path")
 	fs.StringVar(&processedFlag, "processed", os.Getenv("PROCESSED_PATH"), "Temporary directory for converted WebP files")
 	fs.StringVar(&stateFlag, "state", os.Getenv("STATE_DIR"), "State directory for manifests and logs")
@@ -68,6 +69,7 @@ func LoadConfig() (*Config, error) {
 	fs.BoolVar(&deleteOriginalsFlag, "delete-originals", getEnvBool("DELETE_ORIGINALS", false), "Delete converted original files")
 	fs.BoolVar(&hiddenFileListFlag, "hidden-file-list", false, "Print hidden files recorded in the manifest")
 	fs.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan")
+	fs.StringVar(&duplicateFoldersFlag, "folders", os.Getenv("MULTI_FOLDER"), "Comma-separated folders to compare in duplicates mode")
 
 	// Tests and callers may have their own flags. Ignore those after the first unknown flag.
 	_ = fs.Parse(os.Args[1:])
@@ -79,12 +81,26 @@ func LoadConfig() (*Config, error) {
 	})
 
 	mode := strings.ToLower(modeFlag)
-	validModes := map[string]bool{"auto": true, "all": true, "stage": true, "sync": true, "convert": true, "delete": true}
+	validModes := map[string]bool{"auto": true, "all": true, "stage": true, "sync": true, "convert": true, "delete": true, "duplicates": true}
 	if !validModes[mode] {
-		return nil, fmt.Errorf("invalid mode %q: must be one of auto, all, stage, sync, convert, delete", modeFlag)
+		return nil, fmt.Errorf("invalid mode %q: must be one of auto, all, stage, sync, convert, delete, duplicates", modeFlag)
+	}
+	var duplicateFolders []string
+	if mode == "duplicates" {
+		resolvedFolders, folderErr := resolveFolders(duplicateFoldersFlag)
+		if folderErr != nil {
+			return nil, folderErr
+		}
+		duplicateFolders = resolvedFolders
+		if len(duplicateFolders) == 0 {
+			return nil, fmt.Errorf("at least one folder must be provided via -folders or MULTI_FOLDER in duplicates mode")
+		}
+	}
+	if mode != "duplicates" && volFlag == "" {
+		return nil, fmt.Errorf("volume path must be provided via -volume flag or VOLUME_PATH env variable")
 	}
 	if volFlag == "" {
-		return nil, fmt.Errorf("volume path must be provided via -volume flag or VOLUME_PATH env variable")
+		volFlag = duplicateFolders[0]
 	}
 	volumePath, err := filepath.Abs(volFlag)
 	if err != nil {
@@ -136,7 +152,38 @@ func LoadConfig() (*Config, error) {
 		DeleteOriginals:       deleteOriginalsFlag,
 		HiddenFileList:        hiddenFileListFlag,
 		AllowedTypes:          allowedTypes,
+		DuplicateFolders:      duplicateFolders,
 	}, nil
+}
+
+func resolveFolders(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	seen := make(map[string]bool)
+	var folders []string
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		path, err := filepath.Abs(value)
+		if err != nil {
+			return nil, fmt.Errorf("resolve duplicate folder %q: %w", value, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("access duplicate folder %s: %w", path, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("duplicate folder is not a directory: %s", path)
+		}
+		if !seen[path] {
+			seen[path] = true
+			folders = append(folders, path)
+		}
+	}
+	return folders, nil
 }
 
 func resolveStateDir(override string) (string, error) {

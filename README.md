@@ -15,7 +15,7 @@ VOLUME_PATH/
 - The first copy of a byte-identical image remains in place; later copies are moved to a `discarded` folder beside their original directory.
 - You may move any tracked image into its folder's `discarded` directory yourself.
 - `sync` permanently removes files in `discarded` and updates their manifest records.
-- Conversion leaves source files untouched unless `DELETE_ORIGINALS` is enabled. With the default processed workspace, verified WebPs move beside deleted originals; an explicit `PROCESSED_PATH` remains the final output location.
+- Conversion leaves source files untouched unless `DELETE_ORIGINALS` is enabled. In `auto` mode with deletion enabled, verified WebPs move beside deleted originals, including when an external processed workspace was used.
 - `processed` and `discarded` directories are excluded from future scans.
 
 ## Quick start
@@ -27,6 +27,14 @@ go build -o shrinker ./cmd/shrinker
 ./shrinker -mode=all -volume=/Volumes/ExternalSSD/Photos
 ```
 
+To compare a few folders before doing any conversion, use duplicate-review mode:
+
+```shell
+./shrinker -mode=duplicates -folders="/Volumes/DriveA/Photos,/Volumes/DriveB/Archive"
+```
+
+It recursively compares allowed image types by exact file content, keeps the first matching file from the folder order you provide, and shows each later copy as a deletion candidate. Nothing is removed unless you answer `yes` for that duplicate group. This deletion is permanent, so use `no` to leave a group untouched.
+
 `all` pauses after discovery so you can move unwanted images into `discarded` folders, then always asks before deleting converted originals. When using the default workspace, verified WebP files then move into the original folders.
 
 For an unattended, destructive workflow:
@@ -35,7 +43,7 @@ For an unattended, destructive workflow:
 ./shrinker -mode=auto -volume=/Volumes/ExternalSSD/Photos
 ```
 
-`auto` runs discovery, synchronization, and conversion without review prompts. Set `DELETE_ORIGINALS=true` to also delete converted originals. If its temporary workspace is too small, it requests a validated fallback directory before converting. Use it only after validating the volume and configuration with `all`.
+`auto` runs discovery, synchronization, and conversion without review prompts. Set `DELETE_ORIGINALS=true` to delete converted originals and move verified WebPs back into their original folders. If its temporary workspace is too small, it requests a validated fallback directory before converting. Use it only after validating the volume and configuration with `all`.
 
 To review manual discards before conversion:
 
@@ -61,6 +69,7 @@ To review manual discards before conversion:
 | `sync`    | Permanently delete files in every `discarded` directory and update the manifest.                                                                                                                     |
 | `convert` | Convert pending images to `VOLUME_PATH/processed`, preserving relative paths. Source images remain unchanged.                                                                                        |
 | `delete`  | Permanently delete originals whose manifest status is `converted`, then move verified WebP files into their original folders.                                                                        |
+| `duplicates` | Compare allowed images across `-folders`, show exact duplicate groups, and offer a per-group permanent deletion prompt. It does not convert files or use the manifest. |
 
 ## Configuration
 
@@ -68,8 +77,9 @@ Flags override values in a `.env` file in the current directory.
 
 | Flag                   | Environment variable  | Default                 | Description                                                                                                                              |
 | ---------------------- | --------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `-mode`                | `MODE`                | `all`                   | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`.                                                                           |
-| `-volume`              | `VOLUME_PATH`         | —                       | Source root; required for every mode.                                                                                                    |
+| `-mode`                | `MODE`                | `all`                   | One of `auto`, `all`, `stage`, `sync`, `convert`, `delete`, or `duplicates`.                                                            |
+| `-volume`              | `VOLUME_PATH`         | —                       | Source root; required for all modes except `duplicates`.                                                                                 |
+| `-folders`             | `MULTI_FOLDER`        | —                       | Comma-separated folders to compare; required only for `duplicates` mode. Folder order decides which identical copy is kept.             |
 | `-processed`           | `PROCESSED_PATH`      | `VOLUME_PATH/processed` | Output workspace; when explicitly supplied, it remains the final WebP destination.                                                       |
 | `-state`               | `STATE_DIR`           | OS user config folder   | Override the state location, useful for testing or portable runs.                                                                        |
 | `-types`               | `ALLOWED_TYPES`       | `png,jpg,jpeg`          | Comma-separated extensions to process.                                                                                                   |
@@ -103,7 +113,7 @@ DELETE_ORIGINALS=false
 
 The default temporary workspace is `VOLUME_PATH/processed`. Before conversion, the app estimates the required output capacity from the pending image count and target size, including a 10% safety reserve.
 
-When that workspace lacks space, `convert`, `all`, and `auto` ask for an existing empty directory with the required free capacity, then validate it before any conversion starts. You can avoid this prompt by setting `PROCESSED_PATH` or passing `-processed` to an appropriately sized external directory. An explicit `PROCESSED_PATH` is retained as the output location; it is not automatically moved back into the source tree.
+When that workspace lacks space, `convert`, `all`, and `auto` ask for an existing empty directory with the required free capacity, then validate it before any conversion starts. You can avoid this prompt by setting `PROCESSED_PATH` or passing `-processed` to an appropriately sized external directory. In `auto` mode with `DELETE_ORIGINALS=true`, the completed files are moved back into the source tree after deletion; otherwise, the external path remains the output location.
 
 ## Manifest and logs
 
