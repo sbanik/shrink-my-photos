@@ -15,7 +15,7 @@ VOLUME_PATH/
 - The first copy of a byte-identical image remains in place; later copies are moved to a `discarded` folder beside their original directory.
 - You may move any tracked image into its folder's `discarded` directory yourself.
 - `sync` permanently removes files in `discarded` and updates their manifest records.
-- Conversion initially leaves source files untouched. After verified deletion, its WebP is moved beside the original path and the temporary `processed` directory is cleaned up.
+- Conversion leaves source files untouched unless `DELETE_ORIGINALS` is enabled. With the default processed workspace, verified WebPs move beside deleted originals; an explicit `PROCESSED_PATH` remains the final output location.
 - `processed` and `discarded` directories are excluded from future scans.
 
 ## Quick start
@@ -27,7 +27,7 @@ go build -o shrinker ./cmd/shrinker
 ./shrinker -mode=all -volume=/Volumes/ExternalSSD/Photos
 ```
 
-`all` pauses after discovery so you can move unwanted images into `discarded` folders. It then asks before deleting converted originals. When deletion succeeds, the verified WebP files are moved out of `processed` and into their original folders.
+`all` pauses after discovery so you can move unwanted images into `discarded` folders, then always asks before deleting converted originals. When using the default workspace, verified WebP files then move into the original folders.
 
 For an unattended, destructive workflow:
 
@@ -35,7 +35,7 @@ For an unattended, destructive workflow:
 ./shrinker -mode=auto -volume=/Volumes/ExternalSSD/Photos
 ```
 
-`auto` runs discovery, synchronization, conversion, and original deletion without review prompts. If its temporary workspace is too small, it requests a validated fallback directory before converting. Use it only after validating the volume and configuration with `all`.
+`auto` runs discovery, synchronization, and conversion without review prompts. Set `DELETE_ORIGINALS=true` to also delete converted originals. If its temporary workspace is too small, it requests a validated fallback directory before converting. Use it only after validating the volume and configuration with `all`.
 
 To review manual discards before conversion:
 
@@ -55,8 +55,8 @@ To review manual discards before conversion:
 
 | Mode      | Description                                                                                                                                                                                          |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `all`     | Discover images, pause for manual review, optionally delete listed hidden files, sync, convert, and ask before deleting originals. This is the default.                                              |
-| `auto`    | Run `stage → sync → convert → delete` without prompts.                                                                                                                                               |
+| `all`     | Discover images, pause for manual review, optionally delete listed hidden files, sync, convert, and always ask before deleting originals. This is the default.                                      |
+| `auto`    | Run `stage → sync → convert`; delete originals only when `DELETE_ORIGINALS=true`.                                                                                                                     |
 | `stage`   | Recursively discover candidates, list hidden files, ignore camera-photo folders, and move byte-identical duplicates to per-folder `discarded` directories. No ordinary image is copied or converted. |
 | `sync`    | Permanently delete files in every `discarded` directory and update the manifest.                                                                                                                     |
 | `convert` | Convert pending images to `VOLUME_PATH/processed`, preserving relative paths. Source images remain unchanged.                                                                                        |
@@ -70,18 +70,19 @@ Flags override values in a `.env` file in the current directory.
 | --- | --- | --- | --- |
 | `-mode` | `MODE` | `all` | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`. |
 | `-volume` | `VOLUME_PATH` | — | Source root; required for every mode. |
-| `-processed` | `PROCESSED_PATH` | `VOLUME_PATH/processed` | Temporary output workspace; it may be on another volume. |
+| `-processed` | `PROCESSED_PATH` | `VOLUME_PATH/processed` | Output workspace; when explicitly supplied, it remains the final WebP destination. |
 | `-state` | `STATE_DIR` | OS user config folder | Override the state location, useful for testing or portable runs. |
 | `-types` | `ALLOWED_TYPES` | `png,jpg,jpeg` | Comma-separated extensions to process. |
-| `-quality` | `QUALITY` | `90` | Maximum WebP quality from 50 through 90. |
-| `-target-size` | `TARGET_SIZE_KB` | `250` KiB | Target output size for files larger than the small-file threshold. |
+| `-quality` | `QUALITY` | automatic | Preferred WebP quality from 55 through 90. The app uses 80–55 automatically when omitted, or evaluates the supplied value and ±5 points. |
+| `-target-size` | `TARGET_SIZE_KB` | `200` KiB | Ideal output size for files larger than the small-file threshold. |
 | `-small-file-size` | `SMALL_FILE_SIZE_KB` | `150` KiB | Files at or below this size are not resized further. |
 | `-workers` | `WORKERS` | CPU count | Concurrent conversion workers; must be at least 1. |
 | `-clean` | `CLEAN_MANIFEST` | `false` | Start a new manifest during discovery; existing output files remain. |
 | `-delete-hidden-files` | `DELETE_HIDDEN_FILES` | `false` | In `auto` mode, delete discovered hidden regular files without prompting. |
+| `-delete-originals` | `DELETE_ORIGINALS` | `false` | Allow unattended `auto` mode to delete originals. `all` always prompts instead. |
 | `-hidden-file-list` | — | `false` | Print paths, sizes, and status for hidden files stored in the current volume's manifest. |
 
-For images larger than the small-file threshold, the encoder tries qualities from the configured maximum down to 50. If needed, it progressively reduces dimensions until the target size is met. An image that cannot reach the target is retained at the smallest achievable version and is noted in the log.
+For images larger than the small-file threshold, the encoder aims for the ideal 150–200 KiB range and accepts up to 400 KiB before resizing dimensions. It never lowers quality below 55. When `QUALITY` is omitted, it chooses the best quality from 80 down to 55. When you set `QUALITY`, it evaluates that value plus and minus 5 quality points, choosing the best result that meets the size policy. If needed, it progressively reduces dimensions while retaining the permitted quality range.
 
 Example `.env`:
 
@@ -89,18 +90,20 @@ Example `.env`:
 MODE=all
 VOLUME_PATH=/Volumes/ExternalSSD/Photos
 ALLOWED_TYPES=png,jpg,jpeg
-QUALITY=90
-TARGET_SIZE_KB=250
+# Optional: omit for automatic 80–55 quality selection.
+QUALITY=80
+TARGET_SIZE_KB=200
 SMALL_FILE_SIZE_KB=150
 WORKERS=4
 DELETE_HIDDEN_FILES=false
+DELETE_ORIGINALS=false
 ```
 
 ## Low-space conversion
 
 The default temporary workspace is `VOLUME_PATH/processed`. Before conversion, the app estimates the required output capacity from the pending image count and target size, including a 10% safety reserve.
 
-When that workspace lacks space, `convert`, `all`, and `auto` ask for an existing empty directory with the required free capacity, then validate it before any conversion starts. You can avoid this prompt by setting `PROCESSED_PATH` or passing `-processed` to an appropriately sized external directory. The temporary WebP files are moved back into the source folders after their originals are successfully deleted.
+When that workspace lacks space, `convert`, `all`, and `auto` ask for an existing empty directory with the required free capacity, then validate it before any conversion starts. You can avoid this prompt by setting `PROCESSED_PATH` or passing `-processed` to an appropriately sized external directory. An explicit `PROCESSED_PATH` is retained as the output location; it is not automatically moved back into the source tree.
 
 ## Manifest and logs
 

@@ -39,7 +39,9 @@ func main() {
 	switch cfg.Mode {
 	case "delete":
 		processor.RunDeleteOriginals(cfg.ManifestPath)
-		processor.RunFinalize(cfg)
+		if promptYesNo(bufio.NewReader(os.Stdin), "Move processed WebP files into the original folders? (yes/no): ") {
+			processor.RunFinalize(cfg)
+		}
 
 	case "stage":
 		result := processor.RunStage(cfg)
@@ -69,9 +71,11 @@ func main() {
 		processor.RunConvert(cfg)
 		if promptYesNo(reader, "Delete converted original files now? (yes/no): ") {
 			processor.RunDeleteOriginals(cfg.ManifestPath)
-			processor.RunFinalize(cfg)
+			if !cfg.ProcessedPathProvided {
+				processor.RunFinalize(cfg)
+			}
 		} else {
-			fmt.Println("Original files were kept. Run with -mode=delete after reviewing output if needed.")
+			fmt.Println("Original files were kept. Run -mode=delete after reviewing output if needed.")
 		}
 
 	case "auto":
@@ -87,9 +91,15 @@ func main() {
 			return
 		}
 		processor.RunConvert(cfg)
-		fmt.Println("Deleting converted original files...")
-		processor.RunDeleteOriginals(cfg.ManifestPath)
-		processor.RunFinalize(cfg)
+		if cfg.DeleteOriginals {
+			fmt.Println("Deleting converted original files...")
+			processor.RunDeleteOriginals(cfg.ManifestPath)
+			if !cfg.ProcessedPathProvided {
+				processor.RunFinalize(cfg)
+			}
+		} else {
+			fmt.Println("Original files were kept because DELETE_ORIGINALS is false.")
+		}
 	}
 }
 

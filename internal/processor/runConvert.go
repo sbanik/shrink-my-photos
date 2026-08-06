@@ -46,7 +46,11 @@ func RunConvert(cfg *config.Config) {
 	)
 	sem := make(chan struct{}, cfg.Workers)
 	var wg sync.WaitGroup
-	var converted, failed, overTarget, storageChange int64
+	maxOutputSize := cfg.MaxOutputSize
+	if maxOutputSize <= 0 {
+		maxOutputSize = 400 * 1024
+	}
+	var converted, failed, overTarget, overMaximum, storageChange int64
 
 	for _, record := range pending {
 		wg.Add(1)
@@ -64,7 +68,7 @@ func RunConvert(cfg *config.Config) {
 				return
 			}
 			webpPath := filepath.Join(cfg.ProcessedFolder, replaceExtension(relativePath, ".webp"))
-			size, quality, err := helper.ConvertToWebPBounded(record.OriginalPath, webpPath, float32(cfg.Quality), cfg.TargetSize, cfg.SmallFileSize)
+			size, quality, err := helper.ConvertToWebPBounded(record.OriginalPath, webpPath, float32(cfg.Quality), cfg.QualitySpecified, cfg.TargetSize, maxOutputSize, cfg.SmallFileSize)
 			if err != nil {
 				record.Status = "failed"
 				atomic.AddInt64(&failed, 1)
@@ -77,7 +81,11 @@ func RunConvert(cfg *config.Config) {
 			atomic.AddInt64(&storageChange, record.OriginalSize-size)
 			if size > cfg.TargetSize {
 				atomic.AddInt64(&overTarget, 1)
-				log.Printf("%s remains above target size at quality %.0f", record.OriginalPath, quality)
+				log.Printf("%s exceeds the ideal target at quality %.0f", record.OriginalPath, quality)
+			}
+			if size > maxOutputSize {
+				atomic.AddInt64(&overMaximum, 1)
+				log.Printf("%s remains above the 400 KB maximum at quality %.0f", record.OriginalPath, quality)
 			}
 			atomic.AddInt64(&converted, 1)
 		}(record)
@@ -87,7 +95,7 @@ func RunConvert(cfg *config.Config) {
 		fmt.Printf("Could not save manifest: %v\n", err)
 	}
 	cleanupDiscardedFolders(cfg.VolumePath)
-	fmt.Printf("\nConversion complete: %d converted, %d failed, %d above target size.\n", converted, failed, overTarget)
+	fmt.Printf("\nConversion complete: %d converted, %d failed, %d above ideal target, %d above 400 KB maximum.\n", converted, failed, overTarget, overMaximum)
 	fmt.Printf("Potential storage savings after replacing originals: %s\n", helper.FormatBytes(storageChange))
 }
 

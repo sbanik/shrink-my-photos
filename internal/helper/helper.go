@@ -67,9 +67,9 @@ func ConvertToWebP(src, dst string, quality float32) error {
 	return webp.Encode(outFile, img, &webp.Options{Lossless: false, Quality: quality})
 }
 
-// ConvertToWebPBounded writes a WebP at the highest quality that fits targetSize.
-// Large images are progressively resized only when quality 50 is still too large.
-func ConvertToWebPBounded(src, dst string, maxQuality float32, targetSize, smallFileSize int64) (int64, float32, error) {
+// ConvertToWebPBounded prefers the best visual quality at the ideal target
+// size, accepts output up to maxOutputSize, and never lowers quality below 55.
+func ConvertToWebPBounded(src, dst string, preferredQuality float32, qualitySpecified bool, targetSize, maxOutputSize, smallFileSize int64) (int64, float32, error) {
 	fileInfo, err := os.Stat(src)
 	if err != nil {
 		return 0, 0, err
@@ -88,34 +88,67 @@ func ConvertToWebPBounded(src, dst string, maxQuality float32, targetSize, small
 		return 0, 0, err
 	}
 
-	quality := maxQuality
+	qualities := qualityCandidates(preferredQuality, qualitySpecified)
 	if fileInfo.Size() <= smallFileSize {
-		return encodeWebP(img, dst, quality)
+		return encodeWebP(img, dst, qualities[0])
 	}
 
 	working := img
 	for {
-		for quality = maxQuality; quality >= 50; quality -= 5 {
+		var acceptedQuality float32
+		for _, quality := range qualities {
 			size, usedQuality, err := encodeWebP(working, dst, quality)
 			if err != nil {
 				return 0, 0, err
 			}
-			if size <= targetSize || quality == 50 {
-				if size <= targetSize {
-					return size, usedQuality, nil
-				}
-				break
+			if size <= targetSize {
+				return size, usedQuality, nil
 			}
+			if size <= maxOutputSize && acceptedQuality == 0 {
+				acceptedQuality = usedQuality
+			}
+		}
+		if acceptedQuality != 0 {
+			return encodeWebP(working, dst, acceptedQuality)
 		}
 
 		bounds := working.Bounds()
 		newWidth := int(float64(bounds.Dx()) * 0.85)
 		newHeight := int(float64(bounds.Dy()) * 0.85)
 		if newWidth < 1 || newHeight < 1 || (newWidth == bounds.Dx() && newHeight == bounds.Dy()) {
-			return encodeWebP(working, dst, 50)
+			return encodeWebP(working, dst, qualities[len(qualities)-1])
 		}
 		working = resizeNearest(working, newWidth, newHeight)
 	}
+}
+
+func qualityCandidates(preferred float32, qualitySpecified bool) []float32 {
+	if !qualitySpecified {
+		return []float32{80, 75, 70, 65, 60, 55}
+	}
+	high := minFloat32(90, preferred+5)
+	low := maxFloat32(55, preferred-5)
+	candidates := []float32{high}
+	if preferred != high && preferred != low {
+		candidates = append(candidates, preferred)
+	}
+	if low != high {
+		candidates = append(candidates, low)
+	}
+	return candidates
+}
+
+func minFloat32(left, right float32) float32 {
+	if left < right {
+		return left
+	}
+	return right
+}
+func maxFloat32(left, right float32) float32 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func encodeWebP(img image.Image, dst string, quality float32) (int64, float32, error) {

@@ -15,26 +15,32 @@ import (
 )
 
 const (
-	defaultQuality       = 90.0
-	minQuality           = 50.0
-	defaultTargetSize    = 250 * 1024
+	defaultQuality       = 80.0
+	minQuality           = 55.0
+	maxQuality           = 90.0
+	defaultTargetSize    = 200 * 1024
+	defaultMaxOutputSize = 400 * 1024
 	defaultSmallFileSize = 150 * 1024
 )
 
 type Config struct {
-	Mode              string
-	VolumePath        string
-	ProcessedFolder   string
-	ManifestPath      string
-	LogPath           string
-	Quality           float64 // Maximum WebP quality. Conversion adapts down to 50 when needed.
-	TargetSize        int64
-	SmallFileSize     int64
-	Workers           int
-	Clean             bool
-	DeleteHiddenFiles bool
-	HiddenFileList    bool
-	AllowedTypes      []string
+	Mode                  string
+	VolumePath            string
+	ProcessedFolder       string
+	ProcessedPathProvided bool
+	ManifestPath          string
+	LogPath               string
+	Quality               float64 // Preferred WebP quality.
+	QualitySpecified      bool
+	TargetSize            int64
+	MaxOutputSize         int64
+	SmallFileSize         int64
+	Workers               int
+	Clean                 bool
+	DeleteHiddenFiles     bool
+	DeleteOriginals       bool
+	HiddenFileList        bool
+	AllowedTypes          []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -47,23 +53,30 @@ func LoadConfig() (*Config, error) {
 	var qualityFlag float64
 	var targetFlag, smallFlag int64
 	var workersFlag int
-	var cleanFlag, deleteHiddenFlag, hiddenFileListFlag bool
+	var cleanFlag, deleteHiddenFlag, deleteOriginalsFlag, hiddenFileListFlag bool
 
 	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "all"), "Execution mode: auto, all, stage, sync, convert, delete")
 	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source directory path")
 	fs.StringVar(&processedFlag, "processed", os.Getenv("PROCESSED_PATH"), "Temporary directory for converted WebP files")
 	fs.StringVar(&stateFlag, "state", os.Getenv("STATE_DIR"), "State directory for manifests and logs")
-	fs.Float64Var(&qualityFlag, "quality", getEnvFloat("QUALITY", defaultQuality), "Maximum WebP quality (50-90)")
+	fs.Float64Var(&qualityFlag, "quality", getEnvFloat("QUALITY", defaultQuality), "Preferred WebP quality (55-90)")
 	fs.Int64Var(&targetFlag, "target-size", getEnvInt64("TARGET_SIZE_KB", defaultTargetSize/1024)*1024, "Target WebP size in KiB")
 	fs.Int64Var(&smallFlag, "small-file-size", getEnvInt64("SMALL_FILE_SIZE_KB", defaultSmallFileSize/1024)*1024, "Files at or below this size are not resized")
 	fs.IntVar(&workersFlag, "workers", getEnvInt("WORKERS", runtime.NumCPU()), "Number of concurrent workers")
 	fs.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_MANIFEST", false), "Start a new manifest before scanning")
 	fs.BoolVar(&deleteHiddenFlag, "delete-hidden-files", getEnvBool("DELETE_HIDDEN_FILES", false), "Delete discovered hidden files without a prompt")
+	fs.BoolVar(&deleteOriginalsFlag, "delete-originals", getEnvBool("DELETE_ORIGINALS", false), "Delete converted original files")
 	fs.BoolVar(&hiddenFileListFlag, "hidden-file-list", false, "Print hidden files recorded in the manifest")
 	fs.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan")
 
 	// Tests and callers may have their own flags. Ignore those after the first unknown flag.
 	_ = fs.Parse(os.Args[1:])
+	qualitySpecified := os.Getenv("QUALITY") != ""
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == "quality" {
+			qualitySpecified = true
+		}
+	})
 
 	mode := strings.ToLower(modeFlag)
 	validModes := map[string]bool{"auto": true, "all": true, "stage": true, "sync": true, "convert": true, "delete": true}
@@ -77,8 +90,8 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve volume path: %w", err)
 	}
-	if qualityFlag < minQuality || qualityFlag > defaultQuality {
-		return nil, fmt.Errorf("quality must be between %.0f and %.0f", minQuality, defaultQuality)
+	if qualityFlag < minQuality || qualityFlag > maxQuality {
+		return nil, fmt.Errorf("quality must be between %.0f and %.0f", minQuality, maxQuality)
 	}
 	if workersFlag < 1 {
 		return nil, fmt.Errorf("workers must be at least 1")
@@ -106,19 +119,23 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Mode:              mode,
-		VolumePath:        volumePath,
-		ProcessedFolder:   processedPath,
-		ManifestPath:      filepath.Join(stateDir, "manifests", key+".json"),
-		LogPath:           filepath.Join(stateDir, "logs", key+".log"),
-		Quality:           qualityFlag,
-		TargetSize:        targetFlag,
-		SmallFileSize:     smallFlag,
-		Workers:           workersFlag,
-		Clean:             cleanFlag,
-		DeleteHiddenFiles: deleteHiddenFlag,
-		HiddenFileList:    hiddenFileListFlag,
-		AllowedTypes:      allowedTypes,
+		Mode:                  mode,
+		VolumePath:            volumePath,
+		ProcessedFolder:       processedPath,
+		ProcessedPathProvided: processedFlag != "",
+		ManifestPath:          filepath.Join(stateDir, "manifests", key+".json"),
+		LogPath:               filepath.Join(stateDir, "logs", key+".log"),
+		Quality:               qualityFlag,
+		QualitySpecified:      qualitySpecified,
+		TargetSize:            targetFlag,
+		MaxOutputSize:         defaultMaxOutputSize,
+		SmallFileSize:         smallFlag,
+		Workers:               workersFlag,
+		Clean:                 cleanFlag,
+		DeleteHiddenFiles:     deleteHiddenFlag,
+		DeleteOriginals:       deleteOriginalsFlag,
+		HiddenFileList:        hiddenFileListFlag,
+		AllowedTypes:          allowedTypes,
 	}, nil
 }
 

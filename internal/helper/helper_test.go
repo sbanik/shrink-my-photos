@@ -142,3 +142,20 @@ func TestFormatBytes(t *testing.T) {
 		t.Errorf("FormatBytes = %q", got)
 	}
 }
+
+func TestQualityCandidates(t *testing.T) {
+	automatic := qualityCandidates(80, false)
+	if automatic[0] != 80 {
+		t.Fatalf("automatic maximum = %.0f, want 80", automatic[0])
+	}
+	if automatic[len(automatic)-1] != 55 {
+		t.Fatalf("automatic minimum = %.0f, want 55", automatic[len(automatic)-1])
+	}
+	configured := qualityCandidates(80, true)
+	want := []float32{85, 80, 75}
+	for index, quality := range want {
+		if configured[index] != quality {
+			t.Fatalf("configured quality %d = %.0f, want %.0f", index, configured[index], quality)
+		}
+	}
+}
