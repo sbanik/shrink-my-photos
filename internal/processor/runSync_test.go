@@ -41,9 +41,10 @@ func TestRunSync_DuplicatesDirectory(t *testing.T) {
 	_ = helper.SaveManifest(manifestPath, manifest)
 
 	cfg := &config.Config{
-		OutDir:       outDir,
-		StagedFolder: stagedFolder,
-		ManifestPath: manifestPath,
+		OutDir:           outDir,
+		StagedFolder:     stagedFolder,
+		DuplicatesFolder: duplicatesDir,
+		ManifestPath:     manifestPath,
 	}
 
 	deletedCount := RunSync(cfg)
@@ -62,9 +63,9 @@ func TestRunSync_DuplicatesDirectory(t *testing.T) {
 		t.Errorf("Expected duplicate file %s to be deleted", duplicateFile)
 	}
 
-	// 3. Duplicates folder itself should be removed when empty
-	if _, err := os.Stat(duplicatesDir); !os.IsNotExist(err) {
-		t.Errorf("Expected duplicates directory %s to be removed after cleanup", duplicatesDir)
+	// 3. Duplicates directory itself must NOT be deleted
+	if _, err := os.Stat(duplicatesDir); os.IsNotExist(err) {
+		t.Errorf("Expected duplicates directory %s to still exist", duplicatesDir)
 	}
 
 	// 4. Manifest record must be deleted
@@ -97,9 +98,10 @@ func TestRunSync_MissingStagedFiles(t *testing.T) {
 	_ = helper.SaveManifest(manifestPath, manifest)
 
 	cfg := &config.Config{
-		OutDir:       outDir,
-		StagedFolder: stagedFolder,
-		ManifestPath: manifestPath,
+		OutDir:           outDir,
+		StagedFolder:     stagedFolder,
+		DuplicatesFolder: filepath.Join(stagedFolder, "duplicates"),
+		ManifestPath:     manifestPath,
 	}
 
 	RunSync(cfg)
