@@ -29,6 +29,7 @@ func RunStage(cfg *config.Config) int {
 	}
 
 	_ = os.MkdirAll(cfg.StagedFolder, 0755)
+	_ = os.MkdirAll(cfg.DuplicatesFolder, 0755)
 
 	fmt.Printf("Scanning volume path: %s...\n", cfg.VolumePath)
 

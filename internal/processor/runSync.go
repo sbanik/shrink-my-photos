@@ -18,7 +18,7 @@ func RunSync(cfg *config.Config) int {
 		return 0
 	}
 
-	duplicatesDir := filepath.Join(cfg.StagedFolder, "duplicates")
+	duplicatesDir := cfg.DuplicatesFolder
 	var duplicateDeletedCount int
 
 	// 1. Process files manually moved to "to_process/duplicates/"
@@ -67,9 +67,6 @@ func RunSync(cfg *config.Config) int {
 					log.Printf("Failed to delete duplicate file %s: %v\n", dupFilePath, err)
 				}
 			}
-
-			// Clean up empty duplicates directory
-			_ = os.Remove(duplicatesDir)
 		}
 	}
 

@@ -12,16 +12,17 @@ import (
 )
 
 type Config struct {
-	Mode         string
-	VolumePath   string
-	OutDir       string
-	StagedFolder string
-	ManifestPath string
-	LogPath      string
-	Quality      float64
-	Workers      int
-	Clean        bool
-	AllowedTypes []string
+	Mode             string
+	VolumePath       string
+	OutDir           string
+	StagedFolder     string
+	DuplicatesFolder string
+	ManifestPath     string
+	LogPath          string
+	Quality          float64
+	Workers          int
+	Clean            bool
+	AllowedTypes     []string
 }
 
 func LoadConfig() (*Config, error) {
@@ -80,20 +81,22 @@ func LoadConfig() (*Config, error) {
 	}
 
 	stagedFolder := filepath.Join(outFlag, "to_process")
+	duplicatesFolder := filepath.Join(outFlag, "to_process", "duplicates")
 	manifestPath := filepath.Join(outFlag, "manifest.json")
 	logPath := filepath.Join(outFlag, "shrinker.log")
 
 	return &Config{
-		Mode:         mode,
-		VolumePath:   volFlag,
-		OutDir:       outFlag,
-		StagedFolder: stagedFolder,
-		ManifestPath: manifestPath,
-		LogPath:      logPath,
-		Quality:      qualFlag,
-		Workers:      workFlag,
-		Clean:        cleanFlag,
-		AllowedTypes: allowedTypes,
+		Mode:             mode,
+		VolumePath:       volFlag,
+		OutDir:           outFlag,
+		StagedFolder:     stagedFolder,
+		DuplicatesFolder: duplicatesFolder,
+		ManifestPath:     manifestPath,
+		LogPath:          logPath,
+		Quality:          qualFlag,
+		Workers:          workFlag,
+		Clean:            cleanFlag,
+		AllowedTypes:     allowedTypes,
 	}, nil
 }
 
