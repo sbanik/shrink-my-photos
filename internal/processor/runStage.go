@@ -34,7 +34,6 @@ func RunStage(cfg *config.Config) StageResult {
 		if err := helper.SaveManifest(cfg.ManifestPath, manifest); err != nil {
 			fmt.Printf("Could not save manifest: %v\n", err)
 		}
-		printHiddenFiles(hiddenFiles, hiddenFilesBytes)
 		return StageResult{HiddenFiles: hiddenFiles, HiddenFilesBytes: hiddenFilesBytes}
 	}
 
@@ -89,7 +88,6 @@ func RunStage(cfg *config.Config) StageResult {
 		fmt.Printf("Could not save manifest: %v\n", err)
 	}
 	fmt.Printf("\nScan complete: %d pending, %d duplicates moved to discarded, %d camera-folder files ignored, %d already tracked.\n", pending, duplicates, ignoredCamera, skipped)
-	printHiddenFiles(hiddenFiles, hiddenFilesBytes)
 	return StageResult{Pending: pending, HiddenFiles: hiddenFiles, HiddenFilesBytes: hiddenFilesBytes}
 }
 
@@ -157,16 +155,6 @@ func recordHiddenFiles(manifest *helper.Manifest, files []string) int64 {
 		total += info.Size()
 	}
 	return total
-}
-
-func printHiddenFiles(files []string, totalBytes int64) {
-	if len(files) == 0 {
-		return
-	}
-	fmt.Printf("\nFound %d hidden file(s), including possible Apple metadata (%s total):\n", len(files), helper.FormatBytes(totalBytes))
-	for _, path := range files {
-		fmt.Printf("  %s\n", path)
-	}
 }
 
 // DeleteHiddenFiles deletes only regular hidden files explicitly selected by the user.
