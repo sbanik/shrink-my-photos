@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sbanik/shrink-my-photos/internal/config"
 	"github.com/sbanik/shrink-my-photos/internal/helper"
@@ -29,7 +30,7 @@ func calculateSHA256(filePath string) (string, error) {
 }
 
 // RunStage scans the volume path for allowed images, calculates hashes, and stages them.
-// Duplicate files are routed directly to cfg.DuplicatesFolder (to_process/duplicates).
+// Hidden files and duplicates are automatically filtered or routed to duplicates.
 func RunStage(cfg *config.Config) int {
 	manifest, err := helper.LoadManifest(cfg.ManifestPath)
 	if err != nil {
@@ -56,21 +57,36 @@ func RunStage(cfg *config.Config) int {
 	}
 
 	// Track existing hashes to detect duplicates across existing manifest records and current run
-	seenHashes := make(map[string]string) // Hash -> Staged/Original Path
+	seenHashes := make(map[string]string)
 
-	var stagedCount, duplicateCount, skippedCount int
+	var stagedCount, duplicateCount, skippedCount, hiddenSkippedCount int
 
 	err = filepath.Walk(cfg.VolumePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 
-		// Validate extension
+		filename := filepath.Base(path)
+
+		// 1. Skip hidden files and macOS metadata files (.DS_Store, ._filename, .Trashes, etc.)
+		if strings.HasPrefix(filename, ".") {
+			if info.IsDir() && path != cfg.VolumePath {
+				return filepath.SkipDir // Don't traverse into hidden directories (e.g. .git, .Trash)
+			}
+			hiddenSkippedCount++
+			return nil
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		// 2. Validate allowed extension
 		ext := filepath.Ext(path)
 		allowed := false
 		for _, t := range cfg.AllowedTypes {
-			if ext == t {
-				allowed = true;
+			if strings.EqualFold(ext, t) {
+				allowed = true
 				break
 			}
 		}
@@ -78,16 +94,14 @@ func RunStage(cfg *config.Config) int {
 			return nil
 		}
 
-		// Calculate file content hash
+		// 3. Calculate file content hash
 		fileHash, err := calculateSHA256(path)
 		if err != nil {
 			fmt.Printf("Error hashing file %s: %v\n", path, err)
 			return nil
 		}
 
-		filename := filepath.Base(path)
-
-		// Check if content hash was already seen
+		// 4. Check for duplicates
 		if originalPath, exists := seenHashes[fileHash]; exists {
 			fmt.Printf("Duplicate content detected: %s (matches %s)\n", path, originalPath)
 
@@ -138,6 +152,7 @@ func RunStage(cfg *config.Config) int {
 	fmt.Printf("\nStaging Summary:")
 	fmt.Printf("\nSuccessfully Staged : %d", stagedCount)
 	fmt.Printf("\nDuplicates Detected : %d", duplicateCount)
+	fmt.Printf("\nHidden Files Skipped: %d", hiddenSkippedCount)
 	fmt.Printf("\nSkipped (Existing)  : %d", skippedCount)
 	fmt.Printf("\n========================================\n")
 
