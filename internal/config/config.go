@@ -43,7 +43,7 @@ func LoadConfig() (*Config, error) {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	var modeFlag, volFlag, stateFlag, typesFlag string
+	var modeFlag, volFlag, processedFlag, stateFlag, typesFlag string
 	var qualityFlag float64
 	var targetFlag, smallFlag int64
 	var workersFlag int
@@ -51,6 +51,7 @@ func LoadConfig() (*Config, error) {
 
 	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "all"), "Execution mode: auto, all, stage, sync, convert, delete")
 	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source directory path")
+	fs.StringVar(&processedFlag, "processed", os.Getenv("PROCESSED_PATH"), "Temporary directory for converted WebP files")
 	fs.StringVar(&stateFlag, "state", os.Getenv("STATE_DIR"), "State directory for manifests and logs")
 	fs.Float64Var(&qualityFlag, "quality", getEnvFloat("QUALITY", defaultQuality), "Maximum WebP quality (50-90)")
 	fs.Int64Var(&targetFlag, "target-size", getEnvInt64("TARGET_SIZE_KB", defaultTargetSize/1024)*1024, "Target WebP size in KiB")
@@ -96,11 +97,18 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	key := volumeKey(volumePath)
+	processedPath := filepath.Join(volumePath, "processed")
+	if processedFlag != "" {
+		processedPath, err = filepath.Abs(processedFlag)
+		if err != nil {
+			return nil, fmt.Errorf("resolve processed path: %w", err)
+		}
+	}
 
 	return &Config{
 		Mode:              mode,
 		VolumePath:        volumePath,
-		ProcessedFolder:   filepath.Join(volumePath, "processed"),
+		ProcessedFolder:   processedPath,
 		ManifestPath:      filepath.Join(stateDir, "manifests", key+".json"),
 		LogPath:           filepath.Join(stateDir, "logs", key+".log"),
 		Quality:           qualityFlag,

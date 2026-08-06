@@ -6,7 +6,7 @@
 
 ```text
 VOLUME_PATH/
-├── event-a/photo.jpg              → processed/event-a/photo.webp
+├── event-a/photo.jpg              → processed/event-a/photo.webp → event-a/photo.webp
 ├── event-a/discarded/             → emptied by sync, removed after conversion
 └── event-b/photo.png              → processed/event-b/photo.webp
 ```
@@ -15,7 +15,7 @@ VOLUME_PATH/
 - The first copy of a byte-identical image remains in place; later copies are moved to a `discarded` folder beside their original directory.
 - You may move any tracked image into its folder's `discarded` directory yourself.
 - `sync` permanently removes files in `discarded` and updates their manifest records.
-- Conversion leaves source files untouched. The legacy `delete` mode remains available only as an explicit operation.
+- Conversion initially leaves source files untouched. After verified deletion, its WebP is moved beside the original path and the temporary `processed` directory is cleaned up.
 - `processed` and `discarded` directories are excluded from future scans.
 
 ## Quick start
@@ -27,7 +27,7 @@ go build -o shrinker ./cmd/shrinker
 ./shrinker -mode=all -volume=/Volumes/ExternalSSD/Photos
 ```
 
-`all` pauses after discovery so you can move unwanted images into `discarded` folders. It then asks before deleting converted originals. Converted files appear in `/Volumes/ExternalSSD/Photos/processed` with the same nested layout as the source tree.
+`all` pauses after discovery so you can move unwanted images into `discarded` folders. It then asks before deleting converted originals. When deletion succeeds, the verified WebP files are moved out of `processed` and into their original folders.
 
 For an unattended, destructive workflow:
 
@@ -35,7 +35,7 @@ For an unattended, destructive workflow:
 ./shrinker -mode=auto -volume=/Volumes/ExternalSSD/Photos
 ```
 
-`auto` runs discovery, synchronization, conversion, and original deletion without prompts. Use it only after validating the volume and configuration with `all`.
+`auto` runs discovery, synchronization, conversion, and original deletion without review prompts. If its temporary workspace is too small, it requests a validated fallback directory before converting. Use it only after validating the volume and configuration with `all`.
 
 To review manual discards before conversion:
 
@@ -60,7 +60,7 @@ To review manual discards before conversion:
 | `stage`   | Recursively discover candidates, list hidden files, ignore camera-photo folders, and move byte-identical duplicates to per-folder `discarded` directories. No ordinary image is copied or converted. |
 | `sync`    | Permanently delete files in every `discarded` directory and update the manifest.                                                                                                                     |
 | `convert` | Convert pending images to `VOLUME_PATH/processed`, preserving relative paths. Source images remain unchanged.                                                                                        |
-| `delete`  | Permanently delete originals whose manifest status is `converted`. Use only after independently verifying the WebP output.                                                                           |
+| `delete`  | Permanently delete originals whose manifest status is `converted`, then move verified WebP files into their original folders.                                                                        |
 
 ## Configuration
 
@@ -70,6 +70,7 @@ Flags override values in a `.env` file in the current directory.
 | --- | --- | --- | --- |
 | `-mode` | `MODE` | `all` | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`. |
 | `-volume` | `VOLUME_PATH` | — | Source root; required for every mode. |
+| `-processed` | `PROCESSED_PATH` | `VOLUME_PATH/processed` | Temporary output workspace; it may be on another volume. |
 | `-state` | `STATE_DIR` | OS user config folder | Override the state location, useful for testing or portable runs. |
 | `-types` | `ALLOWED_TYPES` | `png,jpg,jpeg` | Comma-separated extensions to process. |
 | `-quality` | `QUALITY` | `90` | Maximum WebP quality from 50 through 90. |
@@ -94,6 +95,12 @@ SMALL_FILE_SIZE_KB=150
 WORKERS=4
 DELETE_HIDDEN_FILES=false
 ```
+
+## Low-space conversion
+
+The default temporary workspace is `VOLUME_PATH/processed`. Before conversion, the app estimates the required output capacity from the pending image count and target size, including a 10% safety reserve.
+
+When that workspace lacks space, `convert`, `all`, and `auto` ask for an existing empty directory with the required free capacity, then validate it before any conversion starts. You can avoid this prompt by setting `PROCESSED_PATH` or passing `-processed` to an appropriately sized external directory. The temporary WebP files are moved back into the source folders after their originals are successfully deleted.
 
 ## Manifest and logs
 

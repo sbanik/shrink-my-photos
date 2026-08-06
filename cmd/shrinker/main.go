@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sbanik/shrink-my-photos/internal/config"
+	"github.com/sbanik/shrink-my-photos/internal/helper"
 	"github.com/sbanik/shrink-my-photos/internal/processor"
 )
 
@@ -38,6 +39,7 @@ func main() {
 	switch cfg.Mode {
 	case "delete":
 		processor.RunDeleteOriginals(cfg.ManifestPath)
+		processor.RunFinalize(cfg)
 
 	case "stage":
 		result := processor.RunStage(cfg)
@@ -47,7 +49,9 @@ func main() {
 		processor.RunSync(cfg)
 
 	case "convert":
-		processor.RunConvert(cfg)
+		if ensureConversionWorkspace(cfg, bufio.NewReader(os.Stdin)) {
+			processor.RunConvert(cfg)
+		}
 
 	case "all":
 		result := processor.RunStage(cfg)
@@ -59,9 +63,13 @@ func main() {
 		fmt.Println("Synchronizing discarded files...")
 		processor.RunSync(cfg)
 		fmt.Println("Converting images...")
+		if !ensureConversionWorkspace(cfg, reader) {
+			return
+		}
 		processor.RunConvert(cfg)
 		if promptYesNo(reader, "Delete converted original files now? (yes/no): ") {
 			processor.RunDeleteOriginals(cfg.ManifestPath)
+			processor.RunFinalize(cfg)
 		} else {
 			fmt.Println("Original files were kept. Run with -mode=delete after reviewing output if needed.")
 		}
@@ -75,9 +83,13 @@ func main() {
 		fmt.Println("Synchronizing discarded files...")
 		processor.RunSync(cfg)
 		fmt.Println("Converting images...")
+		if !ensureConversionWorkspace(cfg, bufio.NewReader(os.Stdin)) {
+			return
+		}
 		processor.RunConvert(cfg)
 		fmt.Println("Deleting converted original files...")
 		processor.RunDeleteOriginals(cfg.ManifestPath)
+		processor.RunFinalize(cfg)
 	}
 }
 
@@ -112,4 +124,40 @@ func promptYesNo(reader *bufio.Reader, message string) bool {
 	}
 	answer := strings.ToLower(strings.TrimSpace(input))
 	return answer == "yes" || answer == "y"
+}
+
+func ensureConversionWorkspace(cfg *config.Config, reader *bufio.Reader) bool {
+	required, count, err := processor.RequiredConversionSpace(cfg)
+	if err != nil {
+		fmt.Printf("Unable to estimate conversion workspace: %v\n", err)
+		return false
+	}
+	if count == 0 {
+		return true
+	}
+	available, err := processor.AvailableWorkspaceSpace(cfg.ProcessedFolder)
+	if err == nil && available >= required {
+		return true
+	}
+	if err != nil {
+		fmt.Printf("Unable to check free space at %s: %v\n", cfg.ProcessedFolder, err)
+	} else {
+		fmt.Printf("Insufficient free space at %s: %s available; %s required for %d image(s).\n", cfg.ProcessedFolder, helper.FormatBytes(available), helper.FormatBytes(required), count)
+	}
+	for {
+		fmt.Printf("Provide a path to an empty directory with at least %s free, or press ENTER to cancel: ", helper.FormatBytes(required))
+		input, readErr := reader.ReadString('\n')
+		if readErr != nil || strings.TrimSpace(input) == "" {
+			fmt.Println("Conversion cancelled before any original files were deleted.")
+			return false
+		}
+		fallbackPath, validationErr := processor.ValidateFallbackWorkspace(strings.TrimSpace(input), required)
+		if validationErr != nil {
+			fmt.Printf("Invalid fallback directory: %v\n", validationErr)
+			continue
+		}
+		cfg.ProcessedFolder = fallbackPath
+		fmt.Printf("Using fallback processed directory: %s\n", fallbackPath)
+		return true
+	}
 }

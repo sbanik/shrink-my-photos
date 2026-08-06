@@ -28,6 +28,24 @@ func CopyFile(src, dst string) error {
 	return err
 }
 
+// MoveFile renames within a filesystem and falls back to copy-and-remove when
+// the processed workspace is on a different volume.
+func MoveFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("destination already exists: %s", dst)
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	if err := CopyFile(src, dst); err != nil {
+		return err
+	}
+	return os.Remove(src)
+}
+
 func ConvertToWebP(src, dst string, quality float32) error {
 	file, err := os.Open(src)
 	if err != nil {
