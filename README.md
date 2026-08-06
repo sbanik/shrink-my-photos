@@ -55,8 +55,8 @@ To review manual discards before conversion:
 
 | Mode      | Description                                                                                                                                                                                          |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `all`     | Discover images, pause for manual review, optionally delete listed hidden files, sync, convert, and always ask before deleting originals. This is the default.                                      |
-| `auto`    | Run `stage → sync → convert`; delete originals only when `DELETE_ORIGINALS=true`.                                                                                                                     |
+| `all`     | Discover images, pause for manual review, optionally delete listed hidden files, sync, convert, and always ask before deleting originals. This is the default.                                       |
+| `auto`    | Run `stage → sync → convert`; delete originals only when `DELETE_ORIGINALS=true`.                                                                                                                    |
 | `stage`   | Recursively discover candidates, list hidden files, ignore camera-photo folders, and move byte-identical duplicates to per-folder `discarded` directories. No ordinary image is copied or converted. |
 | `sync`    | Permanently delete files in every `discarded` directory and update the manifest.                                                                                                                     |
 | `convert` | Convert pending images to `VOLUME_PATH/processed`, preserving relative paths. Source images remain unchanged.                                                                                        |
@@ -66,21 +66,21 @@ To review manual discards before conversion:
 
 Flags override values in a `.env` file in the current directory.
 
-| Flag | Environment variable | Default | Description |
-| --- | --- | --- | --- |
-| `-mode` | `MODE` | `all` | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`. |
-| `-volume` | `VOLUME_PATH` | — | Source root; required for every mode. |
-| `-processed` | `PROCESSED_PATH` | `VOLUME_PATH/processed` | Output workspace; when explicitly supplied, it remains the final WebP destination. |
-| `-state` | `STATE_DIR` | OS user config folder | Override the state location, useful for testing or portable runs. |
-| `-types` | `ALLOWED_TYPES` | `png,jpg,jpeg` | Comma-separated extensions to process. |
-| `-quality` | `QUALITY` | automatic | Preferred WebP quality from 55 through 90. The app uses 80–55 automatically when omitted, or evaluates the supplied value and ±5 points. |
-| `-target-size` | `TARGET_SIZE_KB` | `200` KiB | Ideal output size for files larger than the small-file threshold. |
-| `-small-file-size` | `SMALL_FILE_SIZE_KB` | `150` KiB | Files at or below this size are not resized further. |
-| `-workers` | `WORKERS` | CPU count | Concurrent conversion workers; must be at least 1. |
-| `-clean` | `CLEAN_MANIFEST` | `false` | Start a new manifest during discovery; existing output files remain. |
-| `-delete-hidden-files` | `DELETE_HIDDEN_FILES` | `false` | In `auto` mode, delete discovered hidden regular files without prompting. |
-| `-delete-originals` | `DELETE_ORIGINALS` | `false` | Allow unattended `auto` mode to delete originals. `all` always prompts instead. |
-| `-hidden-file-list` | — | `false` | Print paths, sizes, and status for hidden files stored in the current volume's manifest. |
+| Flag                   | Environment variable  | Default                 | Description                                                                                                                              |
+| ---------------------- | --------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `-mode`                | `MODE`                | `all`                   | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`.                                                                           |
+| `-volume`              | `VOLUME_PATH`         | —                       | Source root; required for every mode.                                                                                                    |
+| `-processed`           | `PROCESSED_PATH`      | `VOLUME_PATH/processed` | Output workspace; when explicitly supplied, it remains the final WebP destination.                                                       |
+| `-state`               | `STATE_DIR`           | OS user config folder   | Override the state location, useful for testing or portable runs.                                                                        |
+| `-types`               | `ALLOWED_TYPES`       | `png,jpg,jpeg`          | Comma-separated extensions to process.                                                                                                   |
+| `-quality`             | `QUALITY`             | automatic               | Preferred WebP quality from 55 through 90. The app uses 80–55 automatically when omitted, or evaluates the supplied value and ±5 points. |
+| `-target-size`         | `TARGET_SIZE_KB`      | `200` KiB               | Ideal output size for files larger than the small-file threshold.                                                                        |
+| `-small-file-size`     | `SMALL_FILE_SIZE_KB`  | `150` KiB               | Files at or below this size are not resized further.                                                                                     |
+| `-workers`             | `WORKERS`             | CPU count               | Concurrent conversion workers; must be at least 1.                                                                                       |
+| `-clean`               | `CLEAN_MANIFEST`      | `false`                 | Start a new manifest during discovery; existing output files remain.                                                                     |
+| `-delete-hidden-files` | `DELETE_HIDDEN_FILES` | `false`                 | In `auto` mode, delete discovered hidden regular files without prompting.                                                                |
+| `-delete-originals`    | `DELETE_ORIGINALS`    | `false`                 | Allow unattended `auto` mode to delete originals.  |
+| `-hidden-file-list`    | —                     | `false`                 | Print paths, sizes, and status for hidden files stored in the current volume's manifest. |
 
 For images larger than the small-file threshold, the encoder aims for the ideal 150–200 KiB range and accepts up to 400 KiB before resizing dimensions. It never lowers quality below 55. When `QUALITY` is omitted, it chooses the best quality from 80 down to 55. When you set `QUALITY`, it evaluates that value plus and minus 5 quality points, choosing the best result that meets the size policy. If needed, it progressively reduces dimensions while retaining the permitted quality range.
 
