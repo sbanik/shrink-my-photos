@@ -51,7 +51,10 @@ func main() {
 		}
 
 		fmt.Println("\n=======================================================")
-		fmt.Printf("Staged screenshots location:\n%s\n\n", cfg.StagedFolder)
+		fmt.Println("Starting Sync ...")
+		processor.RunSync(cfg)
+
+		fmt.Println("\n=======================================================")
 		fmt.Println("Starting Conversion ...")
 		processor.RunConvert(cfg)
 
@@ -73,6 +76,7 @@ func main() {
 		fmt.Print("--> Press ENTER when ready to convert images to WebP... ")
 		_, _ = reader.ReadString('\n')
 
+		processor.RunSync(cfg)
 		processor.RunConvert(cfg)
 
 		fmt.Println("\n=======================================================")

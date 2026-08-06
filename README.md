@@ -58,8 +58,8 @@ go build -o shrinker ./cmd/shrinker
 
 ### Execution Modes
 
-- all: stage + convert + delete [No user input required]
-- all-ask: stage + convert + delete [User input required before conversion and delete]
+- all: stage + sync + convert + delete [No user input required]
+- all-ask: stage + sync + convert + delete [User input required before conversion and delete]
 - stage: stage images
 - sync: sync manual changes. files placed in OUT_PATH/to_process/duplicates, are considered duplicates and removed from original location as well. Can be used to delete non-duplicate files that are no more required.
 - convert: Just convert the files to webp.
