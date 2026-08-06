@@ -37,6 +37,9 @@ func main() {
 	case "stage":
 		processor.RunStage(cfg)
 
+	case "sync":
+		processor.RunSync(cfg)
+
 	case "convert":
 		processor.RunConvert(cfg)
 
