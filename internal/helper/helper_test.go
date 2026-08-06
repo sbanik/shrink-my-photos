@@ -136,3 +136,9 @@ func TestLoadManifest_FileNotFound(t *testing.T) {
 		t.Errorf("Expected error loading non-existent manifest, got nil")
 	}
 }
+
+func TestFormatBytes(t *testing.T) {
+	if got := FormatBytes(10 * 1024 * 1024 * 1024); got != "10.00 GB" {
+		t.Errorf("FormatBytes = %q", got)
+	}
+}

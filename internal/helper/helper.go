@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/chai2010/webp"
 )
@@ -48,10 +49,97 @@ func ConvertToWebP(src, dst string, quality float32) error {
 	return webp.Encode(outFile, img, &webp.Options{Lossless: false, Quality: quality})
 }
 
+// ConvertToWebPBounded writes a WebP at the highest quality that fits targetSize.
+// Large images are progressively resized only when quality 50 is still too large.
+func ConvertToWebPBounded(src, dst string, maxQuality float32, targetSize, smallFileSize int64) (int64, float32, error) {
+	fileInfo, err := os.Stat(src)
+	if err != nil {
+		return 0, 0, err
+	}
+	file, err := os.Open(src)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer file.Close()
+
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return 0, 0, err
+	}
+
+	quality := maxQuality
+	if fileInfo.Size() <= smallFileSize {
+		return encodeWebP(img, dst, quality)
+	}
+
+	working := img
+	for {
+		for quality = maxQuality; quality >= 50; quality -= 5 {
+			size, usedQuality, err := encodeWebP(working, dst, quality)
+			if err != nil {
+				return 0, 0, err
+			}
+			if size <= targetSize || quality == 50 {
+				if size <= targetSize {
+					return size, usedQuality, nil
+				}
+				break
+			}
+		}
+
+		bounds := working.Bounds()
+		newWidth := int(float64(bounds.Dx()) * 0.85)
+		newHeight := int(float64(bounds.Dy()) * 0.85)
+		if newWidth < 1 || newHeight < 1 || (newWidth == bounds.Dx() && newHeight == bounds.Dy()) {
+			return encodeWebP(working, dst, 50)
+		}
+		working = resizeNearest(working, newWidth, newHeight)
+	}
+}
+
+func encodeWebP(img image.Image, dst string, quality float32) (int64, float32, error) {
+	outFile, err := os.Create(dst)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = webp.Encode(outFile, img, &webp.Options{Lossless: false, Quality: quality})
+	closeErr := outFile.Close()
+	if err != nil {
+		return 0, 0, err
+	}
+	if closeErr != nil {
+		return 0, 0, closeErr
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		return 0, 0, err
+	}
+	return info.Size(), quality, nil
+}
+
+func resizeNearest(src image.Image, width, height int) image.Image {
+	bounds := src.Bounds()
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		sourceY := bounds.Min.Y + y*bounds.Dy()/height
+		for x := 0; x < width; x++ {
+			sourceX := bounds.Min.X + x*bounds.Dx()/width
+			dst.Set(x, y, src.At(sourceX, sourceY))
+		}
+	}
+	return dst
+}
+
 func SaveManifest(path string, m *Manifest) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create manifest directory: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write manifest to %s: %w", path, err)
@@ -76,4 +164,24 @@ func FmtPrintfStagedInfo(stagedFolder string) {
 
 func FmtPrintfDeleteOriginalsCmd(outDir string) {
 	fmt.Printf("To delete original files later, run:\n./shrinker -mode=delete -out %s\n", outDir)
+}
+
+// FormatBytes presents storage amounts using binary units without unwieldy values.
+func FormatBytes(bytes int64) string {
+	sign := ""
+	value := float64(bytes)
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%s%.0f %s", sign, value, units[unit])
+	}
+	return fmt.Sprintf("%s%.2f %s", sign, value, units[unit])
 }

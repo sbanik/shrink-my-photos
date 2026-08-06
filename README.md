@@ -1,92 +1,143 @@
 # shrink-my-photos
-Shrink screenshots for Low Disk space
 
-## Setup
+`shrink-my-photos` recursively converts selected image types to WebP without moving ordinary files out of their source folders. It writes converted files below `VOLUME_PATH/processed`, preserving the original directory layout, and keeps its manifest and logs in the operating system's user configuration folder.
 
-### Environment Variables
-Setup .env file
+## What it does
 
-```
-# Execution mode
-MODE=stage
-
-# Path to your target screenshots directory
-VOLUME_PATH=
-
-# Path to your target output directory
-OUT_DIR=
-
-# Compression Quality (0 - 100)
-QUALITY=80
-
-# Maximum concurrent workers (leave blank to default to CPU core count)
-WORKERS= 
-
-# Comma-separated extensions to scan (e.g. png,jpg,jpeg)
-ALLOWED_TYPES=png,jpg,jpeg
-
-# Clean staged folder and manifest before staging
-CLEAN_STAGED=true
-
-# Minimum space savings percentage threshold
-MIN_SAVINGS=10.0
+```text
+VOLUME_PATH/
+├── event-a/photo.jpg              → processed/event-a/photo.webp
+├── event-a/discarded/             → emptied by sync, removed after conversion
+└── event-b/photo.png              → processed/event-b/photo.webp
 ```
 
-## Build
+- Files with the allowed extensions are discovered recursively.
+- The first copy of a byte-identical image remains in place; later copies are moved to a `discarded` folder beside their original directory.
+- You may move any tracked image into its folder's `discarded` directory yourself.
+- `sync` permanently removes files in `discarded` and updates their manifest records.
+- Conversion leaves source files untouched. The legacy `delete` mode remains available only as an explicit operation.
+- `processed` and `discarded` directories are excluded from future scans.
+
+## Quick start
 
 ```shell
 go build -o shrinker ./cmd/shrinker
+
+# Discover files, pause for review, then convert. Original deletion requires confirmation.
+./shrinker -mode=all -volume=/Volumes/ExternalSSD/Photos
 ```
 
-## Run Command
+`all` pauses after discovery so you can move unwanted images into `discarded` folders. It then asks before deleting converted originals. Converted files appear in `/Volumes/ExternalSSD/Photos/processed` with the same nested layout as the source tree.
+
+For an unattended, destructive workflow:
 
 ```shell
-./shrinker -mode=stage -volume=/Volumes/ExternalSSD -out=/Users/yourusername/Desktop/OutputFolder
+./shrinker -mode=auto -volume=/Volumes/ExternalSSD/Photos
 ```
 
-### Command Line Flags
+`auto` runs discovery, synchronization, conversion, and original deletion without prompts. Use it only after validating the volume and configuration with `all`.
 
-|     Flag     | Flag Type | .env Key     |	Default  | Description                                                          |
-|--------------|-----------|--------------|-----------|----------------------------------------------------------------------|
-| -mode        | string    | MODE         | stage     | Execution mode: all (stage + convert), stage (scan & copy), convert (process staged files), delete (remove original files) |
-| -volume      | string    | VOLUME_PATH  | ""        | Source directory/external SSD volume path to scan.                   |
-| -out         | string    | OUT_DIR      | ""        | Destination folder for manifest.json, error.log, and `screenshots/`. |
-| -quality     | float64   | QUALITY      | 80.0      | WebP image encoding quality (range 1.0 to 100.0).                    |
-| -workers     | int       | WORKERS      | CPU Count | Number of concurrent goroutines used during conversion.              |
-| -clean       | bool      | CLEAN_STAGED | false     | Clean staged folder and manifest before staging.                     |
-| -min-savings | float64   | MIN_SAVINGS  | 10.0      | Minimum space savings percentage threshold (e.g. 5.0 for 5%)         |
-
-### Execution Modes
-
-- all: stage + sync + convert + delete [No user input required]
-- all-ask: stage + sync + convert + delete [User input required before conversion and delete]
-- stage: stage images
-- sync: sync manual changes. files placed in OUT_PATH/to_process/duplicates, are considered duplicates and removed from original location as well. Can be used to delete non-duplicate files that are no more required.
-- convert: Just convert the files to webp.
-- delete: Deletes the originals, if conversion is finished.
-
-## Running Unit Tests:
-
-Run the test suite across all files:
+To review manual discards before conversion:
 
 ```shell
-go test -v ./...
+./shrinker -mode=stage -volume=/Volumes/ExternalSSD/Photos
+
+# Move unwanted tracked files to a sibling discarded directory, for example:
+# /Volumes/ExternalSSD/Photos/Trip/discarded/image.jpg
+
+./shrinker -mode=sync -volume=/Volumes/ExternalSSD/Photos
+./shrinker -mode=convert -volume=/Volumes/ExternalSSD/Photos
 ```
 
-To include race condition checks:
+`sync` permanently removes the files in `discarded`. After a conversion run, empty `discarded` directories are removed.
+
+## Modes
+
+| Mode      | Description                                                                                                                                                                                          |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `all`     | Discover images, pause for manual review, optionally delete listed hidden files, sync, convert, and ask before deleting originals. This is the default.                                              |
+| `auto`    | Run `stage → sync → convert → delete` without prompts.                                                                                                                                               |
+| `stage`   | Recursively discover candidates, list hidden files, ignore camera-photo folders, and move byte-identical duplicates to per-folder `discarded` directories. No ordinary image is copied or converted. |
+| `sync`    | Permanently delete files in every `discarded` directory and update the manifest.                                                                                                                     |
+| `convert` | Convert pending images to `VOLUME_PATH/processed`, preserving relative paths. Source images remain unchanged.                                                                                        |
+| `delete`  | Permanently delete originals whose manifest status is `converted`. Use only after independently verifying the WebP output.                                                                           |
+
+## Configuration
+
+Flags override values in a `.env` file in the current directory.
+
+| Flag | Environment variable | Default | Description |
+| --- | --- | --- | --- |
+| `-mode` | `MODE` | `all` | One of `auto`, `all`, `stage`, `sync`, `convert`, or `delete`. |
+| `-volume` | `VOLUME_PATH` | — | Source root; required for every mode. |
+| `-state` | `STATE_DIR` | OS user config folder | Override the state location, useful for testing or portable runs. |
+| `-types` | `ALLOWED_TYPES` | `png,jpg,jpeg` | Comma-separated extensions to process. |
+| `-quality` | `QUALITY` | `90` | Maximum WebP quality from 50 through 90. |
+| `-target-size` | `TARGET_SIZE_KB` | `250` KiB | Target output size for files larger than the small-file threshold. |
+| `-small-file-size` | `SMALL_FILE_SIZE_KB` | `150` KiB | Files at or below this size are not resized further. |
+| `-workers` | `WORKERS` | CPU count | Concurrent conversion workers; must be at least 1. |
+| `-clean` | `CLEAN_MANIFEST` | `false` | Start a new manifest during discovery; existing output files remain. |
+| `-delete-hidden-files` | `DELETE_HIDDEN_FILES` | `false` | In `auto` mode, delete discovered hidden regular files without prompting. |
+| `-hidden-file-list` | — | `false` | Print paths, sizes, and status for hidden files stored in the current volume's manifest. |
+
+For images larger than the small-file threshold, the encoder tries qualities from the configured maximum down to 50. If needed, it progressively reduces dimensions until the target size is met. An image that cannot reach the target is retained at the smallest achievable version and is noted in the log.
+
+Example `.env`:
+
+```dotenv
+MODE=all
+VOLUME_PATH=/Volumes/ExternalSSD/Photos
+ALLOWED_TYPES=png,jpg,jpeg
+QUALITY=90
+TARGET_SIZE_KB=250
+SMALL_FILE_SIZE_KB=150
+WORKERS=4
+DELETE_HIDDEN_FILES=false
+```
+
+## Manifest and logs
+
+By default, state is stored outside the repository and source volume:
+
+- macOS: `~/Library/Application Support/shrink-my-photos/`
+- Windows: `%AppData%\shrink-my-photos\`
+- Linux: `$XDG_CONFIG_HOME/shrink-my-photos/` (normally `~/.config/shrink-my-photos/`)
+
+The app creates a separate hashed manifest and log for each absolute source-volume path, so separate photo roots do not share history.
+
+## Camera-photo filtering
+
+The scanner excludes a directory when it detects camera EXIF metadata in one of its allowed image files. It recognizes common DSLR/mirrorless makes (for example Canon, Nikon, Sony, Fujifilm, Leica, Panasonic, Olympus, Pentax, Ricoh, and Hasselblad) and iPhone/iPad camera metadata. Files with unreadable or no EXIF metadata are treated as ordinary images, deliberately avoiding false positives for screenshots and downloaded images.
+
+EXIF is not a guarantee: stripped metadata, unsupported formats, or a nonstandard camera make cannot be reliably identified. Review the first run on a copy if camera-photo exclusion is important.
+
+## Progress and logs
+
+Scanning and conversion progress display both completed and total file counts, for example `Scanning (42/120)`. Operational errors and images that remain above the target size are written to the per-volume log file in the state directory. Conversion reports potential savings after replacement; deletion reports source space reclaimed, using KB, MB, GB, or TB as appropriate.
+
+## Hidden Apple metadata files
+
+Discovery records every dot-prefixed regular file it skips in the per-volume manifest, including its path, size, and `present` or `deleted` status. It prints the path list and total hidden-file size at the end of discovery. In `all` or `stage` mode, you can explicitly approve their deletion. In unattended `auto` mode, opt in with `DELETE_HIDDEN_FILES=true` or `-delete-hidden-files`.
+
+To print the recorded list later, using `VOLUME_PATH` from `.env` or an explicit `-volume` flag:
 
 ```shell
-go test -v -race ./...
+./shrinker -hidden-file-list
+./shrinker -volume=/Volumes/ExternalSSD/Photos -hidden-file-list
 ```
 
-Running benchmarks
+## Manifest format: JSON or SQLite?
+
+JSON remains a good fit for the current single-process, per-volume manifest: it is portable, inspectable, and the state is written after each phase. SQLite would be worthwhile only if the manifest grows very large, partial/resumable updates during conversion need transaction-level durability, or multiple app processes must access the same volume concurrently. The current workflow does not need that complexity.
+
+## Verification
 
 ```shell
-go test -bench=. ./...
+go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-Cleaning Go Test cache
+## License
 
-```shell
-go clean -testcache
-```
+[MIT License](LICENSE)

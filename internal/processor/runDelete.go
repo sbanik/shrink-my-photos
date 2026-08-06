@@ -32,12 +32,17 @@ func RunDeleteOriginals(manifestPath string) {
 
 	fmt.Println()
 	bar := progressbar.Default(int64(len(toDelete)), "Deleting original files")
-	var deletedCount, failedCount int64
+	var deletedCount, failedCount, reclaimedBytes int64
 
 	for _, rec := range toDelete {
+		originalSize := rec.OriginalSize
+		if info, err := os.Stat(rec.OriginalPath); err == nil {
+			originalSize = info.Size()
+		}
 		if err := os.Remove(rec.OriginalPath); err == nil || os.IsNotExist(err) {
 			rec.Status = "completed"
 			atomic.AddInt64(&deletedCount, 1)
+			atomic.AddInt64(&reclaimedBytes, originalSize)
 		} else {
 			rec.Status = "failed"
 			atomic.AddInt64(&failedCount, 1)
@@ -53,5 +58,6 @@ func RunDeleteOriginals(manifestPath string) {
 	fmt.Println("========================================")
 	fmt.Printf("Successfully Deleted Originals : %d\n", deletedCount)
 	fmt.Printf("Failed Deletions              : %d\n", failedCount)
+	fmt.Printf("Original Space Reclaimed      : %s\n", helper.FormatBytes(reclaimedBytes))
 	fmt.Println("========================================")
 }

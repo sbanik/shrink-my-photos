@@ -1,148 +1,177 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
 
+const (
+	defaultQuality       = 90.0
+	minQuality           = 50.0
+	defaultTargetSize    = 250 * 1024
+	defaultSmallFileSize = 150 * 1024
+)
+
 type Config struct {
-	Mode             string
-	VolumePath       string
-	OutDir           string
-	StagedFolder     string
-	DuplicatesFolder string
-	ProcessedFolder  string
-	ManifestPath     string
-	LogPath          string
-	Quality          float64
-	MinSavings       float64 // Minimum space savings ratio (e.g., 0.05 = 5%)
-	Workers          int
-	Clean            bool
-	AllowedTypes     []string
+	Mode              string
+	VolumePath        string
+	ProcessedFolder   string
+	ManifestPath      string
+	LogPath           string
+	Quality           float64 // Maximum WebP quality. Conversion adapts down to 50 when needed.
+	TargetSize        int64
+	SmallFileSize     int64
+	Workers           int
+	Clean             bool
+	DeleteHiddenFiles bool
+	HiddenFileList    bool
+	AllowedTypes      []string
 }
 
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 
-	var (
-		modeFlag   string
-		volFlag    string
-		outFlag    string
-		qualFlag   float64
-		savingsFlag float64
-		workFlag   int
-		cleanFlag  bool
-		typesFlag  string
-	)
+	var modeFlag, volFlag, stateFlag, typesFlag string
+	var qualityFlag float64
+	var targetFlag, smallFlag int64
+	var workersFlag int
+	var cleanFlag, deleteHiddenFlag, hiddenFileListFlag bool
 
-	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "stage"), "Execution mode: all, stage, sync, convert, delete")
-	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source volume directory path")
-	fs.StringVar(&outFlag, "out", os.Getenv("OUT_DIR"), "Output directory path")
-	fs.Float64Var(&qualFlag, "quality", getEnvFloat("QUALITY", 80.0), "WebP quality target (0.0 - 100.0)")
-	fs.Float64Var(&savingsFlag, "min-savings", getEnvFloat("MIN_SAVINGS", 10.0), "Minimum space savings percentage threshold (e.g. 5.0 for 5%)")
-	fs.IntVar(&workFlag, "workers", getEnvInt("WORKERS", 4), "Number of concurrent workers")
-	fs.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_STAGED", false), "Clean staged folder and manifest before staging")
-	fs.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan (e.g. png,jpg,jpeg)")
+	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "all"), "Execution mode: auto, all, stage, sync, convert, delete")
+	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source directory path")
+	fs.StringVar(&stateFlag, "state", os.Getenv("STATE_DIR"), "State directory for manifests and logs")
+	fs.Float64Var(&qualityFlag, "quality", getEnvFloat("QUALITY", defaultQuality), "Maximum WebP quality (50-90)")
+	fs.Int64Var(&targetFlag, "target-size", getEnvInt64("TARGET_SIZE_KB", defaultTargetSize/1024)*1024, "Target WebP size in KiB")
+	fs.Int64Var(&smallFlag, "small-file-size", getEnvInt64("SMALL_FILE_SIZE_KB", defaultSmallFileSize/1024)*1024, "Files at or below this size are not resized")
+	fs.IntVar(&workersFlag, "workers", getEnvInt("WORKERS", runtime.NumCPU()), "Number of concurrent workers")
+	fs.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_MANIFEST", false), "Start a new manifest before scanning")
+	fs.BoolVar(&deleteHiddenFlag, "delete-hidden-files", getEnvBool("DELETE_HIDDEN_FILES", false), "Delete discovered hidden files without a prompt")
+	fs.BoolVar(&hiddenFileListFlag, "hidden-file-list", false, "Print hidden files recorded in the manifest")
+	fs.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan")
 
+	// Tests and callers may have their own flags. Ignore those after the first unknown flag.
 	_ = fs.Parse(os.Args[1:])
 
 	mode := strings.ToLower(modeFlag)
-
-	validModes := map[string]bool{
-		"all":     true,
-		"stage":   true,
-		"sync":    true,
-		"convert": true,
-		"delete":  true,
-	}
+	validModes := map[string]bool{"auto": true, "all": true, "stage": true, "sync": true, "convert": true, "delete": true}
 	if !validModes[mode] {
-		return nil, fmt.Errorf("invalid mode '%s': must be one of all, stage, sync, convert, delete", modeFlag)
+		return nil, fmt.Errorf("invalid mode %q: must be one of auto, all, stage, sync, convert, delete", modeFlag)
+	}
+	if volFlag == "" {
+		return nil, fmt.Errorf("volume path must be provided via -volume flag or VOLUME_PATH env variable")
+	}
+	volumePath, err := filepath.Abs(volFlag)
+	if err != nil {
+		return nil, fmt.Errorf("resolve volume path: %w", err)
+	}
+	if qualityFlag < minQuality || qualityFlag > defaultQuality {
+		return nil, fmt.Errorf("quality must be between %.0f and %.0f", minQuality, defaultQuality)
+	}
+	if workersFlag < 1 {
+		return nil, fmt.Errorf("workers must be at least 1")
+	}
+	if targetFlag <= 0 || smallFlag <= 0 {
+		return nil, fmt.Errorf("target-size and small-file-size must be positive")
 	}
 
-	if outFlag == "" {
-		return nil, fmt.Errorf("output directory path must be provided via -out flag or OUT_DIR env variable")
+	allowedTypes := normalizeTypes(typesFlag)
+	if len(allowedTypes) == 0 {
+		return nil, fmt.Errorf("at least one allowed file type is required")
 	}
 
-	if (mode == "stage" || mode == "all") && volFlag == "" {
-		return nil, fmt.Errorf("volume path must be provided via -volume flag or VOLUME_PATH env variable for mode '%s'", mode)
+	stateDir, err := resolveStateDir(stateFlag)
+	if err != nil {
+		return nil, err
 	}
-
-	rawTypes := strings.Split(typesFlag, ",")
-	var allowedTypes []string
-	for _, t := range rawTypes {
-		clean := strings.ToLower(strings.TrimSpace(t))
-		if clean != "" {
-			if !strings.HasPrefix(clean, ".") {
-				clean = "." + clean
-			}
-			allowedTypes = append(allowedTypes, clean)
-		}
-	}
-
-	stagedFolder := filepath.Join(outFlag, "to_process")
-	duplicatesFolder := filepath.Join(outFlag, "to_process", "duplicates")
-	processedFolder := filepath.Join(outFlag, "processed")
-	manifestPath := filepath.Join(outFlag, "manifest.json")
-	logPath := filepath.Join(outFlag, "shrinker.log")
-
-	// Convert percentage (e.g. 5.0%) to decimal ratio (0.05)
-	minSavingsRatio := savingsFlag / 100.0
+	key := volumeKey(volumePath)
 
 	return &Config{
-		Mode:             mode,
-		VolumePath:       volFlag,
-		OutDir:           outFlag,
-		StagedFolder:     stagedFolder,
-		DuplicatesFolder: duplicatesFolder,
-		ProcessedFolder:  processedFolder,
-		ManifestPath:     manifestPath,
-		LogPath:          logPath,
-		Quality:          qualFlag,
-		MinSavings:       minSavingsRatio,
-		Workers:          workFlag,
-		Clean:            cleanFlag,
-		AllowedTypes:     allowedTypes,
+		Mode:              mode,
+		VolumePath:        volumePath,
+		ProcessedFolder:   filepath.Join(volumePath, "processed"),
+		ManifestPath:      filepath.Join(stateDir, "manifests", key+".json"),
+		LogPath:           filepath.Join(stateDir, "logs", key+".log"),
+		Quality:           qualityFlag,
+		TargetSize:        targetFlag,
+		SmallFileSize:     smallFlag,
+		Workers:           workersFlag,
+		Clean:             cleanFlag,
+		DeleteHiddenFiles: deleteHiddenFlag,
+		HiddenFileList:    hiddenFileListFlag,
+		AllowedTypes:      allowedTypes,
 	}, nil
 }
 
+func resolveStateDir(override string) (string, error) {
+	if override != "" {
+		return filepath.Abs(override)
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("locate user configuration directory: %w", err)
+	}
+	return filepath.Join(dir, "shrink-my-photos"), nil
+}
+
+func volumeKey(volumePath string) string {
+	sum := sha256.Sum256([]byte(volumePath))
+	return hex.EncodeToString(sum[:8])
+}
+
+func normalizeTypes(raw string) []string {
+	var types []string
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if !strings.HasPrefix(value, ".") {
+			value = "." + value
+		}
+		types = append(types, value)
+	}
+	return types
+}
+
 func getEnvString(key, fallback string) string {
-	if val, ok := os.LookupEnv(key); ok && val != "" {
-		return val
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
 	return fallback
 }
-
 func getEnvFloat(key string, fallback float64) float64 {
-	if val, ok := os.LookupEnv(key); ok && val != "" {
-		if parsed, err := strconv.ParseFloat(val, 64); err == nil {
-			return parsed
-		}
+	if value, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
+		return value
 	}
 	return fallback
 }
-
 func getEnvInt(key string, fallback int) int {
-	if val, ok := os.LookupEnv(key); ok && val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil {
-			return parsed
-		}
+	if value, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return value
 	}
 	return fallback
 }
-
+func getEnvInt64(key string, fallback int64) int64 {
+	if value, err := strconv.ParseInt(os.Getenv(key), 10, 64); err == nil {
+		return value
+	}
+	return fallback
+}
 func getEnvBool(key string, fallback bool) bool {
-	if val, ok := os.LookupEnv(key); ok && val != "" {
-		if parsed, err := strconv.ParseBool(val); err == nil {
-			return parsed
-		}
+	if value, err := strconv.ParseBool(os.Getenv(key)); err == nil {
+		return value
 	}
 	return fallback
 }

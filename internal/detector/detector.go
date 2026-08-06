@@ -24,30 +24,8 @@ var knownCameraMakes = []string{
 }
 
 func IsScreenshot(path string) bool {
-	f, err := os.Open(path)
-	if err == nil {
-		defer f.Close()
-
-		x, err := exif.Decode(f)
-		if err == nil {
-			// Check camera make
-			if makeTag, errMake := x.Get(exif.Make); errMake == nil {
-				makeStr := strings.ToLower(makeTag.String())
-				for _, camera := range knownCameraMakes {
-					if strings.Contains(makeStr, camera) {
-						return false
-					}
-				}
-
-				// iPhone camera photos carry "Apple" as Make AND have a LensModel or Model tag.
-				// iOS Screenshots do not populate lens details.
-				if strings.Contains(makeStr, "apple") {
-					if lensTag, errLens := x.Get(exif.LensModel); errLens == nil && lensTag.String() != "" {
-						return false
-					}
-				}
-			}
-		}
+	if IsCameraPhoto(path) {
+		return false
 	}
 
 	// Aspect Ratio Fallback
@@ -80,5 +58,43 @@ func IsScreenshot(path string) bool {
 		}
 	}
 
+	return false
+}
+
+// IsCameraPhoto identifies image files with camera EXIF metadata. It is
+// intentionally conservative: files without readable EXIF are not classified
+// as camera photos, so screenshots and downloaded images are not discarded.
+func IsCameraPhoto(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	x, err := exif.Decode(f)
+	if err != nil {
+		return false
+	}
+
+	makeTag, err := x.Get(exif.Make)
+	if err != nil {
+		return false
+	}
+	makeStr := strings.ToLower(makeTag.String())
+	for _, camera := range knownCameraMakes {
+		if strings.Contains(makeStr, camera) {
+			return true
+		}
+	}
+	if !strings.Contains(makeStr, "apple") {
+		return false
+	}
+
+	if lensTag, err := x.Get(exif.LensModel); err == nil && strings.TrimSpace(lensTag.String()) != "" {
+		return true
+	}
+	if modelTag, err := x.Get(exif.Model); err == nil {
+		model := strings.ToLower(modelTag.String())
+		return strings.Contains(model, "iphone") || strings.Contains(model, "ipad")
+	}
 	return false
 }
