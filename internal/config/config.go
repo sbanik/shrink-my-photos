@@ -17,9 +17,11 @@ type Config struct {
 	OutDir           string
 	StagedFolder     string
 	DuplicatesFolder string
+	ProcessedFolder  string
 	ManifestPath     string
 	LogPath          string
 	Quality          float64
+	MinSavings       float64 // Minimum space savings ratio (e.g., 0.05 = 5%)
 	Workers          int
 	Clean            bool
 	AllowedTypes     []string
@@ -28,24 +30,29 @@ type Config struct {
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
+	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+
 	var (
-		modeFlag  string
-		volFlag   string
-		outFlag   string
-		qualFlag  float64
-		workFlag  int
-		cleanFlag bool
-		typesFlag string
+		modeFlag   string
+		volFlag    string
+		outFlag    string
+		qualFlag   float64
+		savingsFlag float64
+		workFlag   int
+		cleanFlag  bool
+		typesFlag  string
 	)
 
-	flag.StringVar(&modeFlag, "mode", getEnvString("MODE", "stage"), "Execution mode: all, stage, sync, convert, delete")
-	flag.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source volume directory path")
-	flag.StringVar(&outFlag, "out", os.Getenv("OUT_DIR"), "Output directory path")
-	flag.Float64Var(&qualFlag, "quality", getEnvFloat("QUALITY", 80.0), "WebP quality target (0.0 - 100.0)")
-	flag.IntVar(&workFlag, "workers", getEnvInt("WORKERS", 4), "Number of concurrent workers")
-	flag.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_STAGED", false), "Clean staged folder and manifest before staging")
-	flag.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan (e.g. png,jpg,jpeg)")
-	flag.Parse()
+	fs.StringVar(&modeFlag, "mode", getEnvString("MODE", "stage"), "Execution mode: all, stage, sync, convert, delete")
+	fs.StringVar(&volFlag, "volume", os.Getenv("VOLUME_PATH"), "Source volume directory path")
+	fs.StringVar(&outFlag, "out", os.Getenv("OUT_DIR"), "Output directory path")
+	fs.Float64Var(&qualFlag, "quality", getEnvFloat("QUALITY", 80.0), "WebP quality target (0.0 - 100.0)")
+	fs.Float64Var(&savingsFlag, "min-savings", getEnvFloat("MIN_SAVINGS", 10.0), "Minimum space savings percentage threshold (e.g. 5.0 for 5%)")
+	fs.IntVar(&workFlag, "workers", getEnvInt("WORKERS", 4), "Number of concurrent workers")
+	fs.BoolVar(&cleanFlag, "clean", getEnvBool("CLEAN_STAGED", false), "Clean staged folder and manifest before staging")
+	fs.StringVar(&typesFlag, "types", getEnvString("ALLOWED_TYPES", "png,jpg,jpeg"), "Comma-separated extensions to scan (e.g. png,jpg,jpeg)")
+
+	_ = fs.Parse(os.Args[1:])
 
 	mode := strings.ToLower(modeFlag)
 
@@ -82,8 +89,12 @@ func LoadConfig() (*Config, error) {
 
 	stagedFolder := filepath.Join(outFlag, "to_process")
 	duplicatesFolder := filepath.Join(outFlag, "to_process", "duplicates")
+	processedFolder := filepath.Join(outFlag, "processed")
 	manifestPath := filepath.Join(outFlag, "manifest.json")
 	logPath := filepath.Join(outFlag, "shrinker.log")
+
+	// Convert percentage (e.g. 5.0%) to decimal ratio (0.05)
+	minSavingsRatio := savingsFlag / 100.0
 
 	return &Config{
 		Mode:             mode,
@@ -91,9 +102,11 @@ func LoadConfig() (*Config, error) {
 		OutDir:           outFlag,
 		StagedFolder:     stagedFolder,
 		DuplicatesFolder: duplicatesFolder,
+		ProcessedFolder:  processedFolder,
 		ManifestPath:     manifestPath,
 		LogPath:          logPath,
 		Quality:          qualFlag,
+		MinSavings:       minSavingsRatio,
 		Workers:          workFlag,
 		Clean:            cleanFlag,
 		AllowedTypes:     allowedTypes,

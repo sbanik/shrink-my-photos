@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/sbanik/shrink-my-photos/internal/helper"
 )
 
-// runConvert converts all staged images to WebP concurrently and calculates total storage saved
+// RunConvert converts all staged images to WebP concurrently, saves them to ProcessedFolder, and calculates total storage saved
 func RunConvert(cfg *config.Config) {
 	manifest, err := helper.LoadManifest(cfg.ManifestPath)
 	if err != nil {
@@ -33,6 +34,12 @@ func RunConvert(cfg *config.Config) {
 
 	if len(pending) == 0 {
 		fmt.Println("No staged images remaining for conversion.")
+		return
+	}
+
+	// Ensure the processed output directory exists before conversion
+	if err := os.MkdirAll(cfg.ProcessedFolder, 0755); err != nil {
+		fmt.Printf("Error: Unable to create processed directory %s: %v\n", cfg.ProcessedFolder, err)
 		return
 	}
 
@@ -53,8 +60,12 @@ func RunConvert(cfg *config.Config) {
 				_ = barConvert.Add(1)
 			}()
 
-			ext := filepath.Ext(r.StagedPath)
-			webpPath := r.StagedPath[:len(r.StagedPath)-len(ext)] + ".webp"
+			filename := filepath.Base(r.StagedPath)
+			ext := filepath.Ext(filename)
+			baseName := strings.TrimSuffix(filename, ext)
+
+			// Route output file to ProcessedFolder
+			webpPath := filepath.Join(cfg.ProcessedFolder, baseName+".webp")
 			r.WebPPath = webpPath
 
 			if err := helper.ConvertToWebP(r.StagedPath, webpPath, float32(cfg.Quality)); err != nil {
@@ -69,11 +80,11 @@ func RunConvert(cfg *config.Config) {
 				r.WebPSize = webpInfo.Size()
 				bytesSaved := r.OriginalSize - r.WebPSize
 
-				// Check if space saved is less than 5%
+				// Check against configured savings threshold
 				savingsRatio := float64(bytesSaved) / float64(r.OriginalSize)
-				if savingsRatio < 0.05 {
+				if savingsRatio < cfg.MinSavings {
 					r.Status = "skipped_low_savings"
-					_ = os.Remove(webpPath) // Delete inefficient WebP output
+					_ = os.Remove(webpPath) // Remove inefficient WebP output
 					atomic.AddInt64(&skippedCount, 1)
 					return
 				}
@@ -90,7 +101,7 @@ func RunConvert(cfg *config.Config) {
 	}
 
 	wg.Wait()
-	helper.SaveManifest(cfg.ManifestPath, manifest)
+	_ = helper.SaveManifest(cfg.ManifestPath, manifest)
 
 	fmt.Println("\n========================================")
 	fmt.Println("        PROCESS COMPLETE REPORT         ")

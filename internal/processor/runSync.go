@@ -2,9 +2,9 @@ package processor
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sbanik/shrink-my-photos/internal/config"
 	"github.com/sbanik/shrink-my-photos/internal/helper"
@@ -19,55 +19,76 @@ func RunSync(cfg *config.Config) int {
 	}
 
 	duplicatesDir := cfg.DuplicatesFolder
+	if duplicatesDir == "" {
+		duplicatesDir = filepath.Join(cfg.StagedFolder, "duplicates")
+	}
+
+	// Resolve absolute path for reliable checks
+	absDuplicatesDir, err := filepath.Abs(duplicatesDir)
+	if err != nil {
+		absDuplicatesDir = duplicatesDir
+	}
+
+	fmt.Printf("Checking duplicates directory: %s\n", absDuplicatesDir)
+
 	var duplicateDeletedCount int
 
-	// 1. Process files manually moved to "to_process/duplicates/"
-	if _, err := os.Stat(duplicatesDir); err == nil {
-		entries, err := os.ReadDir(duplicatesDir)
-		if err == nil {
+	if info, err := os.Stat(absDuplicatesDir); err == nil && info.IsDir() {
+		entries, err := os.ReadDir(absDuplicatesDir)
+		if err != nil {
+			fmt.Printf("Failed to read duplicates folder: %v\n", err)
+		} else {
 			for _, entry := range entries {
 				if entry.IsDir() {
 					continue
 				}
 
-				dupFilePath := filepath.Join(duplicatesDir, entry.Name())
-				stagedOriginalPath := filepath.Join(cfg.StagedFolder, entry.Name())
+				dupFileName := entry.Name()
+				dupFilePath := filepath.Join(absDuplicatesDir, dupFileName)
+
+				// Normalize staged target path for comparison
+				stagedOriginalPath := filepath.Clean(filepath.Join(cfg.StagedFolder, dupFileName))
 
 				// Locate corresponding record in manifest
 				var targetKey string
 				var record *helper.FileRecord
 
 				for key, rec := range manifest.Records {
-					if key == stagedOriginalPath || rec.StagedPath == stagedOriginalPath || filepath.Base(rec.StagedPath) == entry.Name() {
+					cleanKey := filepath.Clean(key)
+					cleanStaged := filepath.Clean(rec.StagedPath)
+
+					if cleanKey == stagedOriginalPath ||
+						cleanStaged == stagedOriginalPath ||
+						strings.EqualFold(filepath.Base(rec.StagedPath), dupFileName) {
 						targetKey = key
 						record = rec
 						break
 					}
 				}
 
-				if record != nil {
-					// Delete original file if present
-					if record.OriginalPath != "" {
-						if err := os.Remove(record.OriginalPath); err == nil || os.IsNotExist(err) {
-							fmt.Printf("Deleted original: %s\n", record.OriginalPath)
-						} else {
-							log.Printf("Failed to delete original file %s: %v\n", record.OriginalPath, err)
-						}
+				if record != nil && record.OriginalPath != "" {
+					cleanOrigPath := filepath.Clean(record.OriginalPath)
+					if err := os.Remove(cleanOrigPath); err == nil || os.IsNotExist(err) {
+						fmt.Printf("Deleted original file: %s\n", cleanOrigPath)
+					} else {
+						fmt.Printf("ERROR: Failed to delete original file %s: %v\n", cleanOrigPath, err)
 					}
-
-					// Remove from manifest
 					delete(manifest.Records, targetKey)
+				} else {
+					fmt.Printf("WARNING: No manifest record found for duplicate %s\n", dupFileName)
 				}
 
-				// Delete duplicate file from duplicates folder
+				// Delete the file inside duplicates folder
 				if err := os.Remove(dupFilePath); err == nil {
-					fmt.Printf("Deleted duplicate: %s\n", dupFilePath)
+					fmt.Printf("Deleted duplicate file: %s\n", dupFilePath)
 					duplicateDeletedCount++
 				} else {
-					log.Printf("Failed to delete duplicate file %s: %v\n", dupFilePath, err)
+					fmt.Printf("ERROR: Failed to delete duplicate file %s: %v\n", dupFilePath, err)
 				}
 			}
 		}
+	} else {
+		fmt.Printf("No duplicates directory found at: %s\n", absDuplicatesDir)
 	}
 
 	// 2. Sync manifest records for any remaining missing staged files
