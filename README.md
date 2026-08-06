@@ -56,6 +56,15 @@ go build -o shrinker ./cmd/shrinker
 | -clean       | bool      | CLEAN_STAGED | false     | Clean staged folder and manifest before staging.                     |
 | -min-savings | float64   | MIN_SAVINGS  | 10.0      | Minimum space savings percentage threshold (e.g. 5.0 for 5%)         |
 
+### Execution Modes
+
+- all: stage + convert + delete [No user input required]
+- all-ask: stage + convert + delete [User input required before conversion and delete]
+- stage: stage images
+- sync: sync manual changes. files placed in OUT_PATH/to_process/duplicates, are considered duplicates and removed from original location as well. Can be used to delete non-duplicate files that are no more required.
+- convert: Just convert the files to webp.
+- delete: Deletes the originals, if conversion is finished.
+
 ## Running Unit Tests:
 
 Run the test suite across all files:

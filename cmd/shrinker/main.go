@@ -44,6 +44,22 @@ func main() {
 		processor.RunConvert(cfg)
 
 	case "all":
+		fmt.Println("Starting Staging ...")
+		stagedCount := processor.RunStage(cfg)
+		if stagedCount == 0 {
+			return
+		}
+
+		fmt.Println("\n=======================================================")
+		fmt.Printf("Staged screenshots location:\n%s\n\n", cfg.StagedFolder)
+		fmt.Println("Starting Conversion ...")
+		processor.RunConvert(cfg)
+
+		fmt.Println("\n=======================================================")
+		fmt.Println("Deleting Originals ...")
+		processor.RunDeleteOriginals(cfg.ManifestPath)
+
+	case "all-ask":
 		stagedCount := processor.RunStage(cfg)
 		if stagedCount == 0 {
 			return
@@ -52,7 +68,8 @@ func main() {
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Println("\n=======================================================")
-		helper.FmtPrintfStagedInfo(cfg.StagedFolder)
+		fmt.Printf("Staged screenshots location:\n%s\n\n", cfg.StagedFolder)
+		fmt.Println("--> Review or remove any unwanted images in that directory now.")
 		fmt.Print("--> Press ENTER when ready to convert images to WebP... ")
 		_, _ = reader.ReadString('\n')
 
